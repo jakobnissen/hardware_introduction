@@ -30,17 +30,18 @@
 # ## Content
 #
 # * [Minimize disk writes](#disk)
-# * [Use CPU cache effectively](#cache)
-# * [Minimize allocations](#allocations)
+# * [CPU cache](#cachemisses)
+# * [Alignment](#alignment)
 # * [Inspect generated assembly](#assembly)
+# * [Minimize allocations](#allocations)
 # * [Exploit SIMD vectorization](#simd)
+# * [Struct of arrays](#soa)
 # * [Use specialized CPU instructions](#instructions)
 # * [Inline small functions](#inlining)
 # * [Unroll tight loops](#unrolling)
 # * [Avoid unpredictable branches](#branches)
 # * [Multithreading](#multithreading)
 # * [GPUs](#gpus)
-#
 
 # ## Before you begin: Install packages
 
@@ -57,9 +58,10 @@ using BenchmarkTools
 #
 # For now, we will work with a simplified mental model of a computer. Through this document, I will add more details to our model as they become relevant.
 #
-# <center><h3>
+# <br>
+# <center><font size=5>
 # [CPU] ↔ [RAM] ↔ [DISK]
-# </h3></center>
+# </font></center>
 #
 # The inner parts of a computer contains three important parts:
 #
@@ -100,9 +102,10 @@ end
 
 # Bechmarking this is a little tricky, because the *first* invokation will include the compilation times of both functions. And in the *second* invokation, your operating system will have cached the file in RAM, making the file seek almost instant. To time it properly, run it once, then *change the file*, and run it again. So in fact, we should update our computer diagram:
 #
-# <center><h3>
+# <br>
+# <center><font size=5>
 # [CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]
-# </h3></center>
+# </font></center>
 #
 # On my computer, finding a single byte in a file takes about 2.7 miliseconds, and finding 25,000 integers from a `Set` takes 9.3 miliseconds. So RAM is on the order of 7,000 times faster than disk on my computer.
 #
@@ -110,16 +113,16 @@ end
 #
 # If you need to read a file byte by byte, for example when parsing a file, great speeds improvements can be found by *buffering* the file. When  buffering, you read in larger chunks to memory, and when you want to read from the file, you check if it's in the buffer. If not, read another large chunk into your buffer from the file. This minimizes disk reads.
 
-# ## CPU cache<a id='cache'></a>
+# ## CPU cache<a id='cachemisses'></a>
 # The RAM is faster than the disk, and the CPU in turn is faster than RAM. A CPU ticks like a clock, with a speed of about 3 GHz, i.e. 3 billion ticks per second. One "tick" of this clock is called a clock cycle. While this is not really true, you may imagine that every cycle, the CPU executes a single, simple command called a *CPU instruction* which does one operation on a piece of data. The clock speed then can serve as a reference for other timings in a computer. It is worth realizing that in a single clock cycle, a photon will travel only around 10 cm, and this puts a barrier to how fast memory (which is placed some distance away from the CPU) can operate. In fact, modern computers are so fast that a significant bottleneck in computer speed is the delay caused by the time needed for electricity to move through the wires inside the computer.
 #
 # On this scale, reading from RAM takes around 100 clock cycles. Similarly to how the slowness of disks can be mitigated by copying data to the faster RAM, data from RAM is copied to a smaller memory chip physically on the CPU, called a *cache*. The cache is faster because it is physically on the CPU chip (reducing wire delays), and because it uses a faster type of RAM, static RAM, instead of the slower (but cheaper to manufacture) dynamic RAM. Because it must be placed on the CPU, limiting its size, and because it is more expensive to produce, a typical CPU cache only contains around 1e8 bits, around 1000 times less than RAM. There are actually multiple layers of CPU cache, but here we simplify it and just refer to "the cache" as one single thing:
 #
-# <center><h3>
+# <br>
+# <center><font size=5>
 # [CPU] ↔ [CPU CACHE] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]
-# </h3></center>
+# </font></center>
 #
-# ### Cache misses
 # When the CPU requests a piece of data from the RAM, say a single byte, it will first check if the memory is already in cache. If so, it will read from it from there. This is much faster, usually just a few clock cycles, than access to RAM. If not, we have a *cache miss*, and your program will stall for tens of nanoseconds while your computer copies data from RAM into the cache.
 #
 # It is not possible, except in very low-level languages, to manually manage the CPU cache. Instead, you must make sure to use your cache effectively.
@@ -157,8 +160,10 @@ data = rand(UInt, 0x00000000000fffff);
 #----------------------------------------------------------------------------
 
 # This also has implications for your data structures. Hash tables such as `Dict`s and `Set`s are inherently cache inefficient and almost always causes cache misses, whereas arrays don't.
+#
+# Many of the optimizations in this document indirectly impact cache use, so this is important to have in mind.
 
-# ### Memory alignment
+# ## Memory alignment<a id='alignment'></a>
 # As just mentioned, your CPU will mode 512 consecutive bits (64 bytes) to from main RAM to cache at a time. These 64 bytes is called a *cache line*. Your entire main memory is segmented into cache lines. For example, memory addresses 0 to 63 is one cache line, addresses 64 to 127 is the next, 128 to 191 the next, et cetera. Your CPU may only request one of these cache lines from memory, and not e.g. the 64 bytes from address 30 to 93.
 #
 # This means that some data structures can straddle the boundraries between cache lines. If I request a 64-bit (8 byte) integer at adress 60, this can cause *two* cache misses, the first to get the 0-63 cache line, and the second to get the 64-127 cache line. Even disregaridng the time-consuming cache misses, the CPU must generate two memory addresses from the single requested memory address, and then retrieve the integer from both cache lines, wasting time.
@@ -168,7 +173,7 @@ data = rand(UInt, 0x00000000000fffff);
 function alignment_test(data::Vector{UInt}, offset::Integer)
     n = zero(UInt)
     mask = length(data) - 8
-    GC.@preserve data begin ## protect the array from moving in memory
+    GC.@preserve data begin #### protect the array from moving in memory
         ptr = pointer(data) + (offset & 63)
         for i in 1:1024
             n ⊻= unsafe_load(ptr, (n & mask + 1) % Int)
@@ -196,9 +201,9 @@ memory_address = reinterpret(UInt, pointer(data))
 # It would still possible for an e.g. 7-byte object to be misaligned in an array. In an array of 7-byte objects, the 10th object would be placed at byte offset 7\*(10-1) = 63, and the object would straddle the cache line. However, the compiler usually does not allow struct with a nonstandard size for this reason. If we define a 7-byte struct:
 
 struct AlignmentTest
-    a::UInt32 ## 4 bytes +
-    b::UInt16 ## 2 bytes +
-    c::UInt8  ## 1 byte = 7 bytes?
+    a::UInt32 #### 4 bytes +
+    b::UInt16 #### 2 bytes +
+    c::UInt8  #### 1 byte = 7 bytes?
 end
 #----------------------------------------------------------------------------
 
@@ -222,81 +227,6 @@ get_mem_layout(AlignmentTest)
 #
 # 1. If you manually create object with a strange size, e.g. by accessing a dense integer array with pointers. This can save memory, but will waste time. [My implementation of a Cuckoo filter](https://github.com/jakobnissen/Probably.jl) does this to save space.
 # 2. During matrix operations. If you have a matrix the columns are sometimes unaligned because it is stored densely in memory. E.g. in a 15x15 matrix of `Float32`s, only the first column is aligned, all the others are not. This can have serious effects when doing matrix operations: [I've seen benchmarks](https://chriselrod.github.io/LoopVectorization.jl/latest/examples/matrix_vector_ops/) where an 80x80 matrix/vector multiplication is 2x faster than a 79x79 one due to alignment issues.
-
-# ## Allocations and immutability<a id='allocations'></a>
-# As already mentioned, main RAM is much slower than the CPU cache. However, working in main RAM comes with an additional disadvantage: Your operating system (OS) keeps track of which process have access to which memory. If every process had access to all memory, then it would be trivially easy to make a program that scans your RAM for secret data such as bank passwords. Instead, every process is allocated a bunch of memory by the OS, and is only allowed to read or write to the allocated data.
-#
-# The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Allocation and deallocation takes a significant amount of time depending on the size of objects, from a few tens to hundreds of nanoseconds per allocation. In programming languages such as Julia, Python, R and Java, deallocation is automatically done using a program called the *garbage collector* (GC). Allocating and deallocating objects causes the GC to run, which causes significant time overhead.
-#
-# The following example illustrates the difference in time spent in a function that allocates a vector with the new result relative to one which simply modifies the vector.
-
-function increment(x::Vector{<:Integer})
-    y = similar(x)
-    @inbounds for i in eachindex(x)
-        y[i] = x[i] + 1
-    end
-    return y
-end
-
-function increment!(x::Vector{<:Integer})
-    @inbounds for i in eachindex(x)
-        x[i] = x[i] + 1
-    end
-    return x
-end
-
-data = rand(UInt, 2^10);
-#----------------------------------------------------------------------------
-
-@btime increment(data);
-@btime increment!(data);
-#----------------------------------------------------------------------------
-
-# On my computer, the allocating function is about 5x slower. This is due to a few properties of the code:
-# * First, the allocation itself takes time
-# * Second, the allocated objects eventually have to be deallocated, also taking time
-# * Third, repeated allocations triggers the GC to run, causing overhead
-# * Fourth, more allocation sometimes means less efficient cache use because you are using more memory
-#
-# For these reasons, performant code should keep allocations to a minimum. Note that the `@btime` macro prints the number and size of the allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will also be interested in reducing allocations.
-#
-# ### Not all objects needs to be allocated
-# Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a simple data structures with a beginning and end, similar to a `Vector`. Data from the stack can only be accessed from the end, analogous to a `Vector` with only the two operations `push!` and `pop!`. Additions to the stack are very fast. When we talk about "allocations", however, we talk about data on the heap. Only the heap gives true random access.
-#
-# Intuitively, it may seem obvious that all objects needs to be placed in RAM, must be able to be retrieved at any time by the program, and therefore needs to be allocated on the heap. And for some languages, like Python, this is true. However, this is not true in Julia. Integers, for example, can often be placed on the stack.
-#
-# Why do some objects need to be heap allocated, while others can be stack allocated? To be stack-allocated, the compiler needs to know for certain that:
-#
-# * The object is a fixed, predetermined size, and not too big (max tens of bytes). This is needed for technical reasons for the stack to operate.
-# * That the object never changes. The CPU is free to copy stack-allocated objects, and for immutable objects, there is no way to distinguish a copy from the original. This bears repeating: *With immutable objects, there is no way to distinguish a copy from the original*. This gives the compiler and the CPU certain freedoms when operating on it.
-# * The compiler can predict exactly *when* it needs to access the program. This is usually the case in compiled languages.
-#
-# Objects that contain heap-allocated objects have significantly higher overhead in both memory consumption and time spent. In Julia, we have a concept of a *bitstype*, which is an object that recursively contain no heap-allocated objects. Heap allocated objects are objects of types `String`, `Array`, `Ref` and `Symbol`, mutable objects, or objects containing any of the previous.
-#
-# The latter point is also why objects are immutable by default in Julia, and leads to one other performance tip: Use immutable objects whereever possible.
-
-abstract type AllocatedInteger end
-
-struct StackAllocated <: AllocatedInteger
-    x::Int
-end
-
-mutable struct HeapAllocated <: AllocatedInteger
-    x::Int
-end
-
-Base.:+(x::Int, y::AllocatedInteger) = x + y.x
-Base.:+(x::AllocatedInteger, y::AllocatedInteger) = x.x + y.x
-#----------------------------------------------------------------------------
-
-## When they're put in an array they're heap allocated anyway, but stack allocated objects
-## have access to many more optimizations, like being stored directly in arrays.
-data_stack = [StackAllocated(i) for i in rand(UInt16, 1000000)]
-data_heap = [HeapAllocated(i.x) for i in data_stack]
-
-@btime sum(data_stack)
-@btime sum(data_heap);
-#----------------------------------------------------------------------------
 
 # ## Assembly code<a id='assembly'></a>
 # To run, any program must be translated, or *compiled* to CPU instructions. The CPU instructions are what is actually running on your computer, as opposed to the code written in your programming language, which is merely a *description* of the program. CPU instructions are usually presented to human beings in *assembly*. Assembly is a programming language which has a one-to-one correspondance with CPU instructions.
@@ -383,12 +313,110 @@ divide_fast(x) = x >>> 3
 code_native(divide_slow, (UInt,), debuginfo=:none)
 #----------------------------------------------------------------------------
 
+# ## Allocations and immutability<a id='allocations'></a>
+# As already mentioned, main RAM is much slower than the CPU cache. However, working in main RAM comes with an additional disadvantage: Your operating system (OS) keeps track of which process have access to which memory. If every process had access to all memory, then it would be trivially easy to make a program that scans your RAM for secret data such as bank passwords. Instead, every process is allocated a bunch of memory by the OS, and is only allowed to read or write to the allocated data.
+#
+# The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Allocation and deallocation takes a significant amount of time depending on the size of objects, from a few tens to hundreds of nanoseconds per allocation. In programming languages such as Julia, Python, R and Java, deallocation is automatically done using a program called the *garbage collector* (GC). Allocating and deallocating objects causes the GC to run, which causes significant time overhead.
+#
+# The following example illustrates the difference in time spent in a function that allocates a vector with the new result relative to one which simply modifies the vector.
+
+function increment(x::Vector{<:Integer})
+    y = similar(x)
+    @inbounds for i in eachindex(x)
+        y[i] = x[i] + 1
+    end
+    return y
+end
+
+function increment!(x::Vector{<:Integer})
+    @inbounds for i in eachindex(x)
+        x[i] = x[i] + 1
+    end
+    return x
+end
+
+data = rand(UInt, 2^10);
+#----------------------------------------------------------------------------
+
+@btime increment(data);
+@btime increment!(data);
+#----------------------------------------------------------------------------
+
+# On my computer, the allocating function is about 5x slower. This is due to a few properties of the code:
+# * First, the allocation itself takes time
+# * Second, the allocated objects eventually have to be deallocated, also taking time
+# * Third, repeated allocations triggers the GC to run, causing overhead
+# * Fourth, more allocation sometimes means less efficient cache use because you are using more memory
+#
+# For these reasons, performant code should keep allocations to a minimum. Note that the `@btime` macro prints the number and size of the allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will also be interested in reducing allocations.
+#
+# ### Not all objects needs to be allocated
+# Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a simple data structures with a beginning and end, similar to a `Vector`. Data from the stack can only be accessed from the end, analogous to a `Vector` with only the two operations `push!` and `pop!`. Additions to the stack are very fast. When we talk about "allocations", however, we talk about data on the heap. Only the heap gives true random access.
+#
+# Intuitively, it may seem obvious that all objects needs to be placed in RAM, must be able to be retrieved at any time by the program, and therefore needs to be allocated on the heap. And for some languages, like Python, this is true. However, this is not true in Julia. Integers, for example, can often be placed on the stack.
+#
+# Why do some objects need to be heap allocated, while others can be stack allocated? To be stack-allocated, the compiler needs to know for certain that:
+#
+# * The object is a fixed, predetermined size, and not too big (max tens of bytes). This is needed for technical reasons for the stack to operate.
+# * That the object never changes. The CPU is free to copy stack-allocated objects, and for immutable objects, there is no way to distinguish a copy from the original. This bears repeating: *With immutable objects, there is no way to distinguish a copy from the original*. This gives the compiler and the CPU certain freedoms when operating on it.
+# * The compiler can predict exactly *when* it needs to access the program. This is usually the case in compiled languages.
+#
+# Objects that contain heap-allocated objects have significantly higher overhead in both memory consumption and time spent. In Julia, we have a concept of a *bitstype*, which is an object that recursively contain no heap-allocated objects. Heap allocated objects are objects of types `String`, `Array`, `Ref` and `Symbol`, mutable objects, or objects containing any of the previous. Bitstypes are more performant exactly because they are immutable, fixed in size and can be stack allocated.
+#
+# The latter point is also why objects are immutable by default in Julia, and leads to one other performance tip: Use immutable objects whereever possible.
+
+abstract type AllocatedInteger end
+
+struct StackAllocated <: AllocatedInteger
+    x::Int
+end
+
+mutable struct HeapAllocated <: AllocatedInteger
+    x::Int
+end
+#----------------------------------------------------------------------------
+
+# We can inspect the code needed to instantiate a `HeapAllocated` object with the code needed to instantiate a `StackAllocated` one:
+
+@code_native HeapAllocated(1)
+#----------------------------------------------------------------------------
+
+@code_native StackAllocated(1)
+#----------------------------------------------------------------------------
+
+# Notice the `callq` instructions in the `HeapAllocated` one. This instruction calls out to other functions, meaning that in fact, much more code is really needed to create a `HeapAllocated` object that what is displayed. In constrast, the `StackAllocated` really only needs a few instructions.
+#
+# Because bitstypes dont need to be stored on the heap and can be copied freely, bitstypes are stored *inline* in arrays. This means that bitstype objects can be stored directly inside the array's memory. Non-bitstypes have a unique identity and cannot be copied, so arrays contain reference to the memory location on the heap where they are stored. Accessing such an object from an array then means first accessing the array to get the memory location, and then accessing the object itself using that memory location. Beside the double memory access, objects are stored less efficiently on the heap, meaning that more memory needs to be coped to CPU caches, meaning more cache misses. Hence, even when stored on the heap in an array, bitstypes can be stored more effectively.
+
+Base.:+(x::Int, y::AllocatedInteger) = x + y.x
+Base.:+(x::AllocatedInteger, y::AllocatedInteger) = x.x + y.x
+
+data_stack = [StackAllocated(i) for i in rand(UInt16, 1000000)]
+data_heap = [HeapAllocated(i.x) for i in data_stack]
+
+@btime sum(data_stack)
+@btime sum(data_heap);
+#----------------------------------------------------------------------------
+
+# We can verify that, indeed, the array in the `data_stack` stores the actual data of a `StackAllocated` object, whereas the `data_heap` contains pointers (i.e. memory addresses):
+
+println("First object of data_stack: ", data_stack[1])
+println("First data in data_stack array: ", unsafe_load(pointer(data_stack)), '\n')
+
+println("First object of data_heap: ", data_heap[1])
+first_data = unsafe_load(Ptr{UInt}(pointer(data_heap)))
+println("First data in data_heap array: ", repr(first_data))
+println("Data at address ", repr(first_data), ": ",
+        unsafe_load(Ptr{HeapAllocated}(first_data)))
+#----------------------------------------------------------------------------
+
 # ## Registers and SIMD<a id='simd'></a>
 # It is time yet again to update our simplified computer schematic. A CPU operates only on data present in *registers*. These are small, fixed size slots (e.g. 8 bytes in size) inside the CPU itself. A register is meant to hold one single piece of data, like an integer or a floating point number. As hinted in the section on assembly code, each instruction usually refers to one or two registers which contain the data the operation works on:
 #
-# <center><h3>
+# <br>
+# <center><font size=5>
 # [CPU] ↔ [REGISTERS] ↔ [CPU CACHE] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]
-# </h3></center>
+# </font></center>
 #
 # To operate on data structures larger than one register, the data must be broken up into smaller pieces that fits inside the register. For example, when adding two 128-bit integers on my computer:
 
@@ -457,6 +485,43 @@ data = rand(UInt64, 4096);
 # On my computer, the SIMD code is 10x faster than the non-SIMD code. SIMD alone accounts for only about 4x improvements (since we moved from 64-bits per iteration to 256 bits per iteration). The rest of the gain comes from not spending time checking the bounds and from automatic loop unrolling (explained later), which is also made possible by the `@inbounds` annotation.
 #
 # It' worth mentioning the interaction between SIMD and alignment. If a series of 256-bit (32-byte) SIMD loads are misaligned, then up to half the loads could cross cache line boundraries, as opposed to just 1/8th of 8-byte loads. Thus, alignment is a much more serious issue when using SIMD. Since array beginnings are always aligned, this is usually not an issue, but in cases where you are not guaranteed to start from an aligned starting point, such as with matrix operations, this may make a significant difference. In brand new CPUs with 512-bit registers, the issues is even worse as the SIMD size is the same as the cache line size, so *all* loads would be misaligned if the initial load is.
+
+# ## Struct of arrays<a id='soa'></a>
+# If we create an array containing four `AlignmentTest` objects `A`, `B`, `C` and `D`, the objects will lie end to end in the array, like this:
+#
+#     Objects: |      A        |       B       |       C       |        D      |
+#     Fields:  |   a   | b |c| |   a   | b |c| |   a   | b |c| |   a   | b |c| |
+#     Byte:    1               9              17              25              33
+#
+# Note again that byte no. 8, 16, 24 and 32 are empty to preserve alignment, wasting memory.
+# Now suppose you want to do an operation on all the `.a` fields of the structs. Because the `.a` fields are scattered 8 bytes apart, SIMD operations are much less efficient (loading up to 4 fields at a time) than if all the `.a` fields were stored together (where 8 fields could fit in a 256-bit register). When working with the `.a` fields only, the entire 64-byte cache lines would be read in, of which only half, or 32 bytes would be useful. Not only does this cause more cache misses, we also need instructions to pick out the half of the data from the SIMD registers we need.
+#
+# The memory structure we have above is termed an "array of structs", because, well, it is an array filled with structs. Instead we can strucure our 4 objects `A` to `D` as a "struct of arrays". Conceptually, it could look like:
+
+struct AlignmentTestVector
+    a::Vector{UInt32}
+    b::Vector{UInt16}
+    c::Vector{UInt8}
+end
+#----------------------------------------------------------------------------
+
+# With the following memory layout for each field:
+#
+#     Object: AlignmentTestVector
+#     .a |   A   |   B   |   C   |   D   |
+#     .b | A | B | C | D |
+#     .c |A|B|C|D|
+#
+# Alignment is no longer a problem, no space is wasted on padding. When running through all the `a` fields, all cache lines contain full 64 bytes of relevant data, so SIMD operations do not need extra operations to pick out the relevant data:
+
+Base.rand(::Type{AlignmentTest}) = AlignmentTest(rand(UInt32), rand(UInt16), rand(UInt8))
+
+array_of_structs = [rand(AlignmentTest) for i in 1:1000000]
+struct_of_arrays = AlignmentTestVector(rand(UInt32, 1000000), rand(UInt16, 1000000), rand(UInt8, 1000000));
+
+@btime sum(x -> x.a, array_of_structs)
+@btime sum(struct_of_arrays.a)
+#----------------------------------------------------------------------------
 
 # ## Specialized CPU instructions<a id='instructions'></a>
 #
@@ -631,9 +696,9 @@ end
 ## Copy all odd numbers from src to dst.
 function copy_odds!(dst::Vector{UInt}, src::Vector{UInt})
     write_index = 1
-    for i in src ## <--- this branch is trivially easy to predict
-        if isodd(i)  ## <--- this is the branch we want to predict
-            dst[write_index] = i ## <--- this bounds check causes a branch, easy to predict
+    for i in src #### <--- this branch is trivially easy to predict
+        if isodd(i)  #### <--- this is the branch we want to predict
+            dst[write_index] = i #### <--- this bounds check causes a branch, easy to predict
             write_index += 1
         end
     end
@@ -703,7 +768,45 @@ src_uniform = repeat([UInt(11), UInt(10)], 500000);
 #
 # Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel. Furthermore, many CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors. For example, I am writing this on a laptop with an Intel Core i5-8259U CPU. This CPU has 4 cores, but various operating systems like Windows or Linux would show 8 "CPUs" in the systems monitor program.
 #
-# Hyperthreading doesn't matter much for performance, 20% at most, and unless you are writing extremely highly optimized programs, there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Therefore, I will focus on exploting multiple cores via *multithreading*.
+# Hyperthreading only really matter when your threads are sometimes prevented from doing work. Besides CPU-internal causes like cache misses, a thread can also be paused because it is waiting for an external resource like a webserver or data from a disk. If you are writing a program where some threads spend a significant time idling, the core can be used by the other thread, and hyperthreading can show its value.
+#
+# Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. You can set the enviromental variable `JULIA_NUM_THREADS` before starting Julia. I have 4 cores on this CPU, both with hyperthreading so I have set the number of threads to 8:
+
+Threads.nthreads()
+#----------------------------------------------------------------------------
+
+## Spend about half the time waiting, half time computing
+function half_asleep(start::Bool)
+    a, b = 1, 0
+    for iteration in 1:5
+        start && sleep(0.06)
+        for i in 1:100000000
+            a, b = a + b, a
+        end
+        start || sleep(0.06)
+    end
+    return a
+end
+
+function parallel_sleep(n_jobs)
+    jobs = []
+    for job in 1:n_jobs
+        push!(jobs, Threads.@spawn half_asleep(isodd(job)))
+    end
+    return sum(fetch, jobs)
+end
+
+parallel_sleep(1); ##run once to compile it
+#----------------------------------------------------------------------------
+
+for njobs in (1, 4, 8, 16)
+    @time parallel_sleep(njobs);
+end
+#----------------------------------------------------------------------------
+
+# You can see that with this task, my computer can run 8 jobs in parallel almost as fast as it can run 1. But 16 jobs takes much longer.
+#
+# For CPU-contrained programs, the core is kept busy with only one thread, and there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Most workloads are not that optimized and can really benefit from hyperthreading, so we'll stick with 8 threads for now.
 #
 # #### Parallelizability
 # Multithreading is more difficult that any of the other optimizations, and should be one of the last tools a programmer reaches for. However, it is also an impactful optimization. Compute clusters usually contain CPUs with tens of CPU cores, offering a massive potential speed boost ripe for picking.
@@ -732,7 +835,7 @@ end
 
 "Set brightness of pixels in one column of pixels"
 function fill_column!(M::Matrix, x, real)
-    for (y, im) in enumerate(range(-1.0f0, 1.0f0, length=5000))
+    for (y, im) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 1)))
         M[y, x] = mandel(Complex{Float32}(real, im))
     end
 end
@@ -740,7 +843,7 @@ end
 "Create a Julia fractal image"
 function julia()
     M = Matrix{UInt8}(undef, 5000, 5000)
-    for (x, real) in enumerate(range(-1.0f0, 1.0f0, length=5000))
+    for (x, real) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 2)))
         fill_column!(M, x, real)
     end
     return M
@@ -748,12 +851,6 @@ end
 #----------------------------------------------------------------------------
 
 @time M = julia();
-#----------------------------------------------------------------------------
-
-# Alright, that took around 3 seconds. Let's see how well it does when parallelized. First, we need to make sure that Julia actually was started with the correct number of threads. You can set the enviromental variable `JULIA_NUM_THREADS` before starting Julia. I have 4 cores on this CPU, so I have set it to 4:
-
-## This should return a number above 1
-Threads.nthreads()
 #----------------------------------------------------------------------------
 
 function recursive_fill_columns!(M::Matrix, cols::UnitRange)
@@ -781,7 +878,7 @@ end
 @time M = julia();
 #----------------------------------------------------------------------------
 
-# This is almost exactly 4 times as fast! This is the best case scenario, only possible for truly embarrasingly parallel tasks.
+# This is almost 7 times as fast! This is close to the best case scenario for 8 threads, only possible for near-perfect embarrasingly parallel tasks.
 #
 # Despite the potential for great gains, in my opinion, multithreading should be one of the last resorts for performance improvements, for three reasons:
 #
@@ -800,5 +897,6 @@ end
 #
 # There are also more esoteric chips like TPUs (explicitly designed for low-precision tensor operations common in deep learning) and ASICs (an umbrella term for highly specialized chips intended for one single application). At the time of writing, these chips are uncommon, expensive, poorly supported and have limited uses, and are therefore not of any interest for non-computer science researchers.
 
-
-#----------------------------------------------------------------------------
+# ---
+#
+# *This notebook was generated using [Literate.jl](https://github.com/fredrikekre/Literate.jl).*
