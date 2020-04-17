@@ -67,7 +67,7 @@ using BenchmarkTools
 # 
 # * The central processing usit (CPU) is a chip the size of a stamp. This is where all the computation actually occurs, the brain of the computer.
 # * Random access memory (RAM, or just "memory") is the short-term memory of the computer. This memory requires electrical power to maintain, and is lost when the computer is shut down. RAM serves as a temporary storage of data between the disk and the CPU. Much of time spent "loading" various applications and operating systems is actually spent moving data from disk to RAM and unpacking it there. A typical consumer laptop has around $10^{11}$ bits of RAM memory.
-# * The disk is a mass storage unit. This data on disk persists after power is show down, so the disk contains the long-term memory of the computer. It is also much cheaper per gigabyte than RAM, with consumer PCs having around $10^{13}$ bits of disk space.
+# * The disk is a mass storage unit. This data on disk persists after power is shut down, so the disk contains the long-term memory of the computer. It is also much cheaper per gigabyte than RAM, with consumer PCs having around $10^{13}$ bits of disk space.
 
 # ## Avoid write to disk where possible<a id='disk'></a>
 # Even with a fast mass storage unit such as a solid state drive (SSD) or even the newer Optane technology, disks are many times, usually thousands of times, slower than RAM. In particular, *seeks*, i.e. switching to a new point of the disk to read from or write to, is slow. As a consequence, writing a large chunk of data to disk is much faster than writing many small chunks.
@@ -84,7 +84,7 @@ function test_file(path)
         read(file, UInt8)
     end
 end
-@time test_file("sudoku.ipynb")
+@time test_file("../fasta.svg")
 
 ## This test may seem weirdly constructed, but I use a Set to force cache misses to compare
 ## main RAM (and not cache) with disk.
@@ -100,18 +100,18 @@ end
 @time test_RAM(data);
 #----------------------------------------------------------------------------
 
-# Bechmarking this is a little tricky, because the *first* invokation will include the compilation times of both functions. And in the *second* invokation, your operating system will have stored a copy of the file (or *cached* the file) in RAM, making the file seek almost instant. To time it properly, run it once, then *change the file*, and run it again. So in fact, we should update our computer diagram:
+# Benchmarking this is a little tricky, because the *first* invokation will include the compilation times of both functions. And in the *second* invokation, your operating system will have stored a copy of the file (or *cached* the file) in RAM, making the file seek almost instant. To time it properly, run it once, then *change the file*, and run it again. So in fact, we should update our computer diagram:
 # 
 # <br>
 # <center><font size=5>
 # [CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]
 # </font></center>
 # 
-# On my computer, finding a single byte in a file takes about 2.7 miliseconds, and finding 25,000 integers from a `Set` takes 9.3 miliseconds. So RAM is on the order of 7,000 times faster than disk.
+# On my computer, finding a single byte in a file takes about 13 miliseconds, and finding 25,000 integers from a `Set` takes 9.5 miliseconds. So RAM is on the order of 34,000 times faster than disk.
 # 
 # When working with data too large to fit into RAM, load in the data chunk by chunk, e.g. one line at a time, and operate on that. That way, you don't need *random access* to your file and thus need to waste time on extra seeks, but only sequential access. And you *must* strive to do your computation when only reading in your file *once*.
 # 
-# If you need to read a file byte by byte, for example when parsing a file, great speeds improvements can be found by *buffering* the file. When  buffering, you read in larger chunks, the *buffer*, to memory, and when you want to read from the file, you check if it's in the buffer. If not, read another large chunk into your buffer from the file. This approach minimizes disk reads. Both your operating system and your programming language will make use of caches, however, sometimes [it is necessary to manually cache your file](https://github.com/JuliaLang/julia/issues/34195).
+# If you need to read a file byte by byte, for example when parsing a file, great speed improvements can be found by *buffering* the file. When  buffering, you read in larger chunks, the *buffer*, to memory, and when you want to read from the file, you check if it's in the buffer. If not, read another large chunk into your buffer from the file. This approach minimizes disk reads. Both your operating system and your programming language will make use of caches, however, sometimes [it is necessary to manually buffer your files](https://github.com/JuliaLang/julia/issues/34195).
 
 # ## CPU cache<a id='cachemisses'></a>
 # The RAM is faster than the disk, and the CPU in turn is faster than RAM. A CPU ticks like a clock, with a speed of about 3 GHz, i.e. 3 billion ticks per second. One "tick" of this clock is called a *clock cycle*. While this is not really true, you may imagine that every cycle, the CPU executes a single, simple command called a *CPU instruction* which does one operation on a small piece of data. The clock speed then can serve as a reference for other timings in a computer. It is worth realizing that in a single clock cycle, a photon will travel only around 10 cm, and this puts a barrier to how fast memory (which is placed some distance away from the CPU) can operate. In fact, modern computers are so fast that a significant bottleneck in their speed is the delay caused by the time needed for electricity to move through the wires inside the computer.
@@ -129,14 +129,14 @@ end
 # 
 # Effective use of the cache comes down to *locality*, temporal and spacial locality:
 # * By *temporal locality*, I mean that data you recently accessed likely resides in cache already. Therefore, if you must access a piece of memory multiple times, make sure you do it close together in time.
-# * By *spacial locality*, I mean that you should access data from memory addresses close to each other. Your CPU does not copy *just* the requested bytes to cache. Instead, it, your CPU will always copy larger chunk of data (usually consecutive 512 bits).
+# * By *spacial locality*, I mean that you should access data from memory addresses close to each other. Your CPU does not copy *just* the requested bytes to cache. Instead, your CPU will always copy larger chunk of data (usually consecutive 512 bits).
 # 
 # From this information, one can deduce a number of simple tricks to improve performance:
 # * Use as little memory as possible. When your data takes up less memory, it is more likely that your data will be in cache. Remember, a CPU can do approximately 100 small operations in the time wasted by a single cache miss.
 # 
-# * When reading data from RAM, read it sequentially, such that you mostly have the next data you will be using in cache, instead of in a random order. In fact, modern CPUs will detect if you are reading in data sequentally, and *prefetch* the data, that is, fetching the next chunk while the current chunk is being processed, reducing delays caused by cache misses.
+# * When reading data from RAM, read it sequentially, such that you mostly have the next data you will be using in cache, instead of in a random order. In fact, modern CPUs will detect if you are reading in data sequentially, and *prefetch* the data, that is, fetching the next chunk while the current chunk is being processed, reducing delays caused by cache misses.
 # 
-# The following example illustrates two simple functions that iterates over a random array, xor'ing the data. The first function iterates linearly over the array. The second instead uses the current result (which is random) to determine the next index, thus it jumps erratically over the array. On my computer, the second function is *more than 10 times slower* than the first.
+# The following example illustrates two simple functions that iterate over a random array, xor'ing the data. The first function iterates linearly over the array. The second instead uses the current result (which is random) to determine the next index, thus it jumps erratically over the array. On my computer, the second function is *more than 10 times slower* than the first.
 
 function linear_access(data)
     x = 0
@@ -166,11 +166,11 @@ data = rand(UInt, 0x00000000000fffff);
 # Many of the optimizations in this document indirectly impact cache use, so this is important to have in mind.
 
 # ## Memory alignment<a id='alignment'></a>
-# As just mentioned, your CPU will mode 512 consecutive bits (64 bytes) to from main RAM to cache at a time. These 64 bytes is called a *cache line*. Your entire main memory is segmented into cache lines. For example, memory addresses 0 to 63 is one cache line, addresses 64 to 127 is the next, 128 to 191 the next, et cetera. Your CPU may only request one of these cache lines from memory, and not e.g. the 64 bytes from address 30 to 93.
+# As just mentioned, your CPU will move 512 consecutive bits (64 bytes) to and from main RAM to cache at a time. These 64 bytes are called a *cache line*. Your entire main memory is segmented into cache lines. For example, memory addresses 0 to 63 is one cache line, addresses 64 to 127 is the next, 128 to 191 the next, et cetera. Your CPU may only request one of these cache lines from memory, and not e.g. the 64 bytes from address 30 to 93.
 # 
-# This means that some data structures can straddle the boundraries between cache lines. If I request a 64-bit (8 byte) integer at adress 60, this can cause *two* cache misses, the first to get the 0-63 cache line, and the second to get the 64-127 cache line. Even disregaridng the time-consuming cache misses, the CPU must generate two memory addresses from the single requested memory address, and then retrieve the integer from both cache lines, wasting time.
+# This means that some data structures can straddle the boundaries between cache lines. If I request a 64-bit (8 byte) integer at adress 60, this can cause *two* cache misses, the first to get the 0-63 cache line, and the second to get the 64-127 cache line. Even disregaridng the time-consuming cache misses, the CPU must generate two memory addresses from the single requested memory address, and then retrieve the integer from both cache lines, wasting time.
 # 
-# The time wasted can be significant. In a situation where cache misses provides the bottleneck, the slowdown can approach 2x. In the following example, I use a pointer to repeatedly access an array at a given offset from a cache line boundrary. If the offset is in the range `0:56`, the integers all fit within one single cache line, and the function is fast. If the offset is in `57:63` all integers will straddle cache lines.
+# The time wasted can be significant. In a situation where cache misses provides the bottleneck, the slowdown can approach 2x. In the following example, I use a pointer to repeatedly access an array at a given offset from a cache line boundary. If the offset is in the range `0:56`, the integers all fit within one single cache line, and the function is fast. If the offset is in `57:63` all integers will straddle cache lines.
 
 function alignment_test(data::Vector{UInt}, offset::Integer)
     n = zero(UInt)
@@ -192,15 +192,15 @@ data = rand(UInt, 256);
 
 # The above example is paticularly bad, having a near 2x slowdown.
 # 
-# Fortunately, the compiler does a few tricks to make it less likely that you will access misaligned data. First, Julia (and other compiled languages) always places new objects in memory at the boundraries of cache lines. When an object is placed right at the boundrary, we say that it is *aligned*. Julia also aligns the beginning of arrays:
+# Fortunately, the compiler does a few tricks to make it less likely that you will access misaligned data. First, Julia (and other compiled languages) always places new objects in memory at the boundaries of cache lines. When an object is placed right at the boundary, we say that it is *aligned*. Julia also aligns the beginning of arrays:
 
 memory_address = reinterpret(UInt, pointer(data))
 @assert iszero(memory_address % 64)
 #----------------------------------------------------------------------------
 
-# Note that if the beginning of an array is aligned, then it's not possible for 1-, 2-, 4-, or 8-byte integers to straddle cache line boundraries, and everything will be aligned.
+# Note that if the beginning of an array is aligned, then it's not possible for 1-, 2-, 4-, or 8-byte integers to straddle cache line boundaries, and everything will be aligned.
 # 
-# It would still possible for an e.g. 7-byte object to be misaligned in an array. In an array of 7-byte objects, the 10th object would be placed at byte offset $7 \times (10-1) = 63$, and the object would straddle the cache line. However, the compiler usually does not allow struct with a nonstandard size for this reason. If we define a 7-byte struct:
+# It would still be possible for an e.g. 7-byte object to be misaligned in an array. In an array of 7-byte objects, the 10th object would be placed at byte offset $7 \times (10-1) = 63$, and the object would straddle the cache line. However, the compiler usually does not allow struct with a nonstandard size for this reason. If we define a 7-byte struct:
 
 struct AlignmentTest
     a::UInt32 #### 4 bytes +
@@ -319,15 +319,15 @@ code_native(divide_slow, (UInt,), debuginfo=:none)
 # ## Allocations and immutability<a id='allocations'></a>
 # As already mentioned, main RAM is much slower than the CPU cache. However, working in main RAM comes with an additional disadvantage: Your operating system (OS) keeps track of which process have access to which memory. If every process had access to all memory, then it would be trivially easy to make a program that scans your RAM for secret data such as bank passwords - or for one program to accidentally overwrite the memory of another program. Instead, every process is allocated a bunch of memory by the OS, and is only allowed to read or write to the allocated data.
 # 
-# The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Allocation and deallocation takes a significant amount of time depending on the size of objects, from a few tens to hundreds of nanoseconds per allocation.
+# The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Memory that is not kept track of will eventually be overwritten by other data. Allocation and deallocation takes a significant amount of time depending on the size of objects, from a few tens to hundreds of nanoseconds per allocation.
 # 
-# In programming languages such as Julia, Python, R and Java, deallocation is automatically done using a program called the *garbage collector* (GC). This program keeps track of which objects are rendered reachable by the programmer, and destroys them. For example, if you do:
+# In programming languages such as Julia, Python, R and Java, deallocation is automatically done using a program called the *garbage collector* (GC). This program keeps track of which objects are rendered reachable by the programmer, and deallocates them. For example, if you do:
 
 thing = [1,2,3]
 thing = nothing
 #----------------------------------------------------------------------------
 
-# Then there is no way to get the original array `[1,2,3]` back, it is unreachable. Hence it is simply wasting RAM, and doing nothing. It is *garbage*. Allocating and deallocating objects causes the GC to start its scan of all objects in memory and destroy the unreachable ones, which causes significant time overhead. You can also start the garbage collector manually:
+# Then there is no way to get the original array `[1,2,3]` back, it is unreachable. Hence it is simply wasting RAM, and doing nothing. It is *garbage*. Allocating and deallocating objects sometimes cause the GC to start its scan of all objects in memory and deallocate the unreachable ones, which causes significant lag. You can also start the garbage collector manually:
 
 GC.gc()
 #----------------------------------------------------------------------------
@@ -498,7 +498,7 @@ data = rand(UInt64, 4096);
 
 # On my computer, the SIMD code is 10x faster than the non-SIMD code. SIMD alone accounts for only about 4x improvements (since we moved from 64-bits per iteration to 256 bits per iteration). The rest of the gain comes from not spending time checking the bounds and from automatic loop unrolling (explained later), which is also made possible by the `@inbounds` annotation.
 # 
-# It' worth mentioning the interaction between SIMD and alignment. If a series of 256-bit (32-byte) SIMD loads are misaligned, then up to half the loads could cross cache line boundraries, as opposed to just 1/8th of 8-byte loads. Thus, alignment is a much more serious issue when using SIMD. Since array beginnings are always aligned, this is usually not an issue, but in cases where you are not guaranteed to start from an aligned starting point, such as with matrix operations, this may make a significant difference. In brand new CPUs with 512-bit registers, the issues is even worse as the SIMD size is the same as the cache line size, so *all* loads would be misaligned if the initial load is.
+# It's worth mentioning the interaction between SIMD and alignment: If a series of 256-bit (32-byte) SIMD loads are misaligned, then up to half the loads could cross cache line boundaries, as opposed to just 1/8th of 8-byte loads. Thus, alignment is a much more serious issue when using SIMD. Since array beginnings are always aligned, this is usually not an issue, but in cases where you are not guaranteed to start from an aligned starting point, such as with matrix operations, this may make a significant difference. In brand new CPUs with 512-bit registers, the issues is even worse as the SIMD size is the same as the cache line size, so *all* loads would be misaligned if the initial load is.
 
 # ## Struct of arrays<a id='soa'></a>
 # If we create an array containing four `AlignmentTest` objects `A`, `B`, `C` and `D`, the objects will lie end to end in the array, like this:
@@ -869,6 +869,8 @@ end
 @time M = julia();
 #----------------------------------------------------------------------------
 
+# That took around 3 seconds on my computer. Now for a parallel one:
+
 function recursive_fill_columns!(M::Matrix, cols::UnitRange)
     F, L = first(cols), last(cols)
     ## If only one column, fill it using fill_column!
@@ -899,7 +901,7 @@ end
 # Despite the potential for great gains, in my opinion, multithreading should be one of the last resorts for performance improvements, for three reasons:
 # 
 # 1. Implementing multithreading is harder than other optimization methods in many cases. In the example shown, it was very easy. In a complicated workflow, it can get messy quickly.
-# 2. Multithreading can cause hard-to-diagnose and erratic bugs. These are almost always related to multiple threads reading from, and writing to the same memory. For example, if two threads both increment an integer with value `N` at the same time, the two threads will both read `N` from memory and write `N+1` back to memory, where the correct result of two increments should be `N+2`! Infuriatingly, these bugs appear and disappear unpredictably, since they are causing by bad timing. These bugs of course have solutions, but it is tricky subject outside the scope of this paper.
+# 2. Multithreading can cause hard-to-diagnose and erratic bugs. These are almost always related to multiple threads reading from, and writing to the same memory. For example, if two threads both increment an integer with value `N` at the same time, the two threads will both read `N` from memory and write `N+1` back to memory, where the correct result of two increments should be `N+2`! Infuriatingly, these bugs appear and disappear unpredictably, since they are causing by unlucky timing. These bugs of course have solutions, but it is tricky subject outside the scope of this document.
 # 3. Finally, achieving performance by using multiple threads is really achieving performance by consuming more resources, instead of gaining something from nothing. Often, you pay for using more threads, either literally when buying cloud compute time, or when paying the bill of increased electricity consumption from multiple CPU cores, or metaphorically by laying claim to more of your users' CPU resources they could use somewhere else. In contrast, more *efficent* computation costs nothing.
 
 # ## GPUs<a id='gpus'></a>
@@ -907,7 +909,7 @@ end
 # 
 # As shown in the above example with the Julia set, the task of creating computer images are often embarassingly parallel with an extremely high degree of parallelizability. In the limit, the value of each pixel is an independent task. This calls for a chip with a high number of cores to do effectively. Because generating graphics is a fundamental part of what computers do, nearly all commercial computers contain a GPU. Often, it's a smaller chip integrated into the motherboard (*integrated graphics*, popular in small laptops). Other times, it's a large, bulky card.
 # 
-# GPUs have sacrificed many of the bells and whistles of CPUs covered in this document such as specialized instructions, SIMD and branch prediction. They also usually run at lower frequencies than CPUs. This means that their raw computer power is many times slower than a CPU. To make up for this, they have a high number of cores. For example, the high-end gaming GPU NVIDIA RTX 2080Ti has 4,352 cores. Hence, some tasks can experience 10s or even 100s of times speedup using a GPU. Most notably for scientific applications, matrix and vector operations are highly parallelizable.
+# GPUs have sacrificed many of the bells and whistles of CPUs covered in this document such as specialized instructions, SIMD and branch prediction. They also usually run at lower frequencies than CPUs. This means that their raw compute power is many times slower than a CPU. To make up for this, they have a high number of cores. For example, the high-end gaming GPU NVIDIA RTX 2080Ti has 4,352 cores. Hence, some tasks can experience 10s or even 100s of times speedup using a GPU. Most notably for scientific applications, matrix and vector operations are highly parallelizable.
 # 
 # Unfortunately, the laptop I'm writing this document on has only integrated graphics, and there is not yet a stable way to interface with integrated graphics using Julia, so I cannot show examples.
 # 
