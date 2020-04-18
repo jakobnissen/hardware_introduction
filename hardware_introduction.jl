@@ -47,8 +47,9 @@
 
 ## Install packages
 using Pkg
-Pkg.add("StaticArrays")
-Pkg.add("BenchmarkTools")
+
+Pkg.add("BenchmarkTools", io=devnull)
+Pkg.add("StaticArrays", io=devnull)
 
 using StaticArrays
 using BenchmarkTools
@@ -84,7 +85,7 @@ function test_file(path)
         read(file, UInt8)
     end
 end
-@time test_file("../fasta.svg")
+@time test_file("../some_file.txt")
 
 ## This test may seem weirdly constructed, but I use a Set to force cache misses to compare
 ## main RAM (and not cache) with disk.
@@ -109,7 +110,7 @@ end
 # 
 # On my computer, finding a single byte in a file takes about 13 miliseconds, and finding 25,000 integers from a `Set` takes 9.5 miliseconds. So RAM is on the order of 34,000 times faster than disk.
 # 
-# When working with data too large to fit into RAM, load in the data chunk by chunk, e.g. one line at a time, and operate on that. That way, you don't need *random access* to your file and thus need to waste time on extra seeks, but only sequential access. And you *must* strive to do your computation when only reading in your file *once*.
+# When working with data too large to fit into RAM, load in the data chunk by chunk, e.g. one line at a time, and operate on that. That way, you don't need *random access* to your file and thus need to waste time on extra seeks, but only sequential access. And you *must* strive to write your program such that any input files are only read through *once*, not multiple times.
 # 
 # If you need to read a file byte by byte, for example when parsing a file, great speed improvements can be found by *buffering* the file. When  buffering, you read in larger chunks, the *buffer*, to memory, and when you want to read from the file, you check if it's in the buffer. If not, read another large chunk into your buffer from the file. This approach minimizes disk reads. Both your operating system and your programming language will make use of caches, however, sometimes [it is necessary to manually buffer your files](https://github.com/JuliaLang/julia/issues/34195).
 
@@ -129,12 +130,12 @@ end
 # 
 # Effective use of the cache comes down to *locality*, temporal and spacial locality:
 # * By *temporal locality*, I mean that data you recently accessed likely resides in cache already. Therefore, if you must access a piece of memory multiple times, make sure you do it close together in time.
-# * By *spacial locality*, I mean that you should access data from memory addresses close to each other. Your CPU does not copy *just* the requested bytes to cache. Instead, your CPU will always copy larger chunk of data (usually consecutive 512 bits).
+# * By *spacial locality*, I mean that you should access data from memory addresses close to each other. Your CPU does not copy *just* the requested bytes to cache. Instead, your CPU will always copy larger chunk of data (usually 512 consecutive bits).
 # 
 # From this information, one can deduce a number of simple tricks to improve performance:
 # * Use as little memory as possible. When your data takes up less memory, it is more likely that your data will be in cache. Remember, a CPU can do approximately 100 small operations in the time wasted by a single cache miss.
 # 
-# * When reading data from RAM, read it sequentially, such that you mostly have the next data you will be using in cache, instead of in a random order. In fact, modern CPUs will detect if you are reading in data sequentially, and *prefetch* the data, that is, fetching the next chunk while the current chunk is being processed, reducing delays caused by cache misses.
+# * When reading data from RAM, read it sequentially, such that you mostly have the next data you will be using in cache, instead of in a random order. In fact, modern CPUs will detect if you are reading in data sequentially, and *prefetch* upcoming data, that is, fetching the next chunk while the current chunk is being processed, reducing delays caused by cache misses.
 # 
 # The following example illustrates two simple functions that iterate over a random array, xor'ing the data. The first function iterates linearly over the array. The second instead uses the current result (which is random) to determine the next index, thus it jumps erratically over the array. On my computer, the second function is *more than 10 times slower* than the first.
 
@@ -158,7 +159,7 @@ data = rand(UInt, 0x00000000000fffff);
 #----------------------------------------------------------------------------
 
 @btime linear_access(data)
-@btime random_access(data)
+@btime random_access(data);
 #----------------------------------------------------------------------------
 
 # This also has implications for your data structures. Hash tables such as `Dict`s and `Set`s are inherently cache inefficient and almost always cause cache misses, whereas arrays don't.
@@ -187,7 +188,7 @@ data = rand(UInt, 256);
 #----------------------------------------------------------------------------
 
 @btime alignment_test(data, 10)
-@btime alignment_test(data, 60)
+@btime alignment_test(data, 60);
 #----------------------------------------------------------------------------
 
 # The above example is paticularly bad, having a near 2x slowdown.
@@ -198,7 +199,7 @@ memory_address = reinterpret(UInt, pointer(data))
 @assert iszero(memory_address % 64)
 #----------------------------------------------------------------------------
 
-# Note that if the beginning of an array is aligned, then it's not possible for 1-, 2-, 4-, or 8-byte integers to straddle cache line boundaries, and everything will be aligned.
+# Note that if the beginning of an array is aligned, then it's not possible for 1-, 2-, 4-, or 8-byte objects to straddle cache line boundaries, and everything will be aligned.
 # 
 # It would still be possible for an e.g. 7-byte object to be misaligned in an array. In an array of 7-byte objects, the 10th object would be placed at byte offset $7 \times (10-1) = 63$, and the object would straddle the cache line. However, the compiler usually does not allow struct with a nonstandard size for this reason. If we define a 7-byte struct:
 
@@ -259,7 +260,7 @@ get_mem_layout(AlignmentTest)
 # ; │└└└└└└
 # ```
 # 
-# The lines beginning with `;` are comments, and explain which section of the code the following instructions come from. They show the nested series of function calls, and where in the source code they are. You can see that `linear_access` calls `eachindex`, which calls `axes1`, which calls `axes`, which calls `size` and `map`, etc. Under the comment line containing the `size` call, we see the first CPU instruction. The instruction name is on the far left, `movq`. The name is composed of two parts, `mov`, the kind of instruction (to move a single integer of data), and a suffix `q`, short for "quad", which means 64-bit integer. There are the following suffixes:  `b` (byte, 8 bit), `w` (word, 16 bit), `l`, (long, 32 bit) and `q` (quad, 64 bit).
+# The lines beginning with `;` are comments, and explain which section of the code the following instructions come from. They show the nested series of function calls, and where in the source code they are. You can see that `linear_access` calls `eachindex`, which calls `axes1`, which calls `axes`, which calls `size` and `map`, etc. Under the comment line containing the `size` call, we see the first CPU instruction. The instruction name is on the far left, `movq`. The name is composed of two parts, `mov`, the kind of instruction (to move content to or from a register), and a suffix `q`, short for "quad", which means 64-bit integer. There are the following suffixes:  `b` (byte, 8 bit), `w` (word, 16 bit), `l`, (long, 32 bit) and `q` (quad, 64 bit).
 # 
 # The next two columns in the instruction, `24(%rsi)` and `%rax` are the arguments to `movq`. These are the names of the registers (we will return to registers later) where the data to operate on are stored.
 # 
@@ -300,14 +301,14 @@ get_mem_layout(AlignmentTest)
 # __As reference__
 # ```
 # read from cache (1-5 cycles)
-# read to ram (cahche miss) (100 cycles)
+# read to ram (cache miss) (100 cycles)
 # memory allocation (400 cycles)
 # ```
 # 
 # If you have an inner loop executing millions of times, it may pay off to inspect the generated assembly code for the loop and check if you can express the computation in terms of fast CPU instructions. For example, if you have an integer you know to be 0 or above, and you want to divide it by 8 (discarding any remainder), you can instead do a bitshift:
 
 divide_slow(x) = div(x, 8)
-divide_fast(x) = x >>> 3
+divide_fast(x) = x >>> 3;
 #----------------------------------------------------------------------------
 
 # However, modern compilers are pretty clever, and will often figure out the optimal instructions to use in your functions to obtain the same result, by for example replacing an integer divide `idivq` instruction with a bitshift right (`shrq`) where applicable to be faster. You need to check the assembly code yourself to see:
@@ -321,7 +322,7 @@ code_native(divide_slow, (UInt,), debuginfo=:none)
 # 
 # The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Memory that is not kept track of will eventually be overwritten by other data. Allocation and deallocation take a significant amount of time depending on the size of objects, from a few tens to hundreds of nanoseconds per allocation.
 # 
-# In programming languages such as Julia, Python, R and Java, deallocation is automatically done using a program called the *garbage collector* (GC). This program keeps track of which objects are rendered reachable by the programmer, and deallocates them. For example, if you do:
+# In programming languages such as Julia, Python, R and Java, deallocation is automatically done using a program called the *garbage collector* (GC). This program keeps track of which objects are rendered unreachable by the programmer, and deallocates them. For example, if you do:
 
 thing = [1,2,3]
 thing = nothing
@@ -362,10 +363,10 @@ data = rand(UInt, 2^10);
 # * Third, repeated allocations triggers the GC to run, causing overhead
 # * Fourth, more allocations sometimes means less efficient cache use because you are using more memory
 # 
-# For these reasons, performant code should keep allocations to a minimum. Note that the `@btime` macro prints the number and size of the allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will also be interested in reducing allocations.
+# For these reasons, performant code should keep allocations to a minimum. Note that the `@btime` macro prints the number and size of the allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will be interested in reducing allocations.
 # 
 # ### Not all objects need to be allocated
-# Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a simple data structure with a beginning and end, similar to a `Vector`. Data from the stack can only be accessed from the end, analogous to a `Vector` with only the two operations `push!` and `pop!`. These operations on the stack are very fast. When we talk about "allocations", however, we talk about data on the heap. Only the heap gives true random access.
+# Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a simple data structure with a beginning and end, similar to a `Vector` in Julia. The stack can only be modified by adding or subtracting elements from the end, analogous to a `Vector` with only the two mutating operations `push!` and `pop!`. These operations on the stack are very fast. When we talk about "allocations", however, we talk about data on the heap. Only the heap gives true random access.
 # 
 # Intuitively, it may seem obvious that all objects need to be placed in RAM, must be able to be retrieved at any time by the program, and therefore need to be allocated on the heap. And for some languages, like Python, this is true. However, this is not true in Julia. Integers, for example, can often be placed on the stack.
 # 
@@ -493,7 +494,7 @@ data = rand(UInt64, 4096);
 #----------------------------------------------------------------------------
 
 @btime sum_nosimd(data)
-@btime sum_simd(data)
+@btime sum_simd(data);
 #----------------------------------------------------------------------------
 
 # On my computer, the SIMD code is 10x faster than the non-SIMD code. SIMD alone accounts for only about 4x improvements (since we moved from 64-bits per iteration to 256 bits per iteration). The rest of the gain comes from not spending time checking the bounds and from automatic loop unrolling (explained later), which is also made possible by the `@inbounds` annotation.
@@ -534,7 +535,7 @@ array_of_structs = [rand(AlignmentTest) for i in 1:1000000]
 struct_of_arrays = AlignmentTestVector(rand(UInt32, 1000000), rand(UInt16, 1000000), rand(UInt8, 1000000));
 
 @btime sum(x -> x.a, array_of_structs)
-@btime sum(struct_of_arrays.a)
+@btime sum(struct_of_arrays.a);
 #----------------------------------------------------------------------------
 
 # ## Specialized CPU instructions<a id='instructions'></a>
@@ -558,9 +559,9 @@ function manual_count_ones(x)
     return n
 end
 
-data = rand(UInt, 10000);
+data = rand(UInt, 10000)
 @btime sum(manual_count_ones, data)
-@btime sum(count_ones, data)
+@btime sum(count_ones, data);
 #----------------------------------------------------------------------------
 
 # The timings you observe here will depend on whether your compiler is clever enough to realize that the computation in the first function can be expressed as a `popcnt` instruction, and thus will be compiled to that. On my computer, the compiler is not able to make that inference, and the second function achieves the same result more than 100x faster.
@@ -574,7 +575,7 @@ data = rand(UInt, 10000);
 const __m128i = NTuple{2, VecElement{Int64}}
 
 ## Define the function in terms of LLVM instructions
-aesenc(a, roundkey) = ccall("llvm.x86.aesni.aesenc", llvmcall, __m128i, (__m128i, __m128i), a, roundkey)
+aesenc(a, roundkey) = ccall("llvm.x86.aesni.aesenc", llvmcall, __m128i, (__m128i, __m128i), a, roundkey);
 #----------------------------------------------------------------------------
 
 # We can verify it works by checking the assembly of the function, which should contain only a single `vaesenc` instruction, as well as the `retq` (return) and the `nopw` (do nothing, used as a filler to align the CPU instructions in memory) instruction:
@@ -624,11 +625,11 @@ function time_function(F, x::AbstractVector)
         n += F(i)
     end
     return n
-end
+end;
 #----------------------------------------------------------------------------
 
 @btime time_function(noninline_poly, data)
-@btime time_function(inline_poly, data)
+@btime time_function(inline_poly, data);
 #----------------------------------------------------------------------------
 
 # ## Unrolling<a id='unrolling'></a>
@@ -668,7 +669,7 @@ end
 # end
 # ```
 # 
-# The result is obviously the same if we assume the length of the vector is divisible by four. If the length is not divisible by four, we could simply use the function above to sum the first N - N\%4 elements and add the last few elements in another loop. Despite the functionally identical result, the assembly of the loop is different and may look something like:
+# The result is obviously the same if we assume the length of the vector is divisible by four. If the length is not divisible by four, we could simply use the function above to sum the first N - rem(N, 4) elements and add the last few elements in another loop. Despite the functionally identical result, the assembly of the loop is different and may look something like:
 # 
 # ```
 # L1:
@@ -863,7 +864,7 @@ function julia()
         fill_column!(M, x, real)
     end
     return M
-end
+end;
 #----------------------------------------------------------------------------
 
 @time M = julia();
@@ -890,7 +891,7 @@ function julia()
     M = Matrix{UInt8}(undef, 5000, 5000)
     recursive_fill_columns!(M, 1:5000)
     return M
-end
+end;
 #----------------------------------------------------------------------------
 
 @time M = julia();
