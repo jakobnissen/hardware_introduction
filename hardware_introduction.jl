@@ -1,6 +1,6 @@
 # # What scientists must know about hardware to write fast code
 # 
-# Programming is used in many fields of science today, where individual scientists often have to write custom code for their own projects. For most scientists, however, computer science is not their field of expertise; They have learned programming by necessity. I count myself as one of them. While we may may be resonably familiar with the *software* side of programming, we rarely have even a basic understanding of how computer *hardware* impacts code performance.
+# Programming is used in many fields of science today, where individual scientists often have to write custom code for their own projects. For most scientists, however, computer science is not their field of expertise; They have learned programming by necessity. I count myself as one of them. While we may be reasonably familiar with the *software* side of programming, we rarely have even a basic understanding of how computer *hardware* impacts code performance.
 # 
 # The aim of this tutorial is to give non-professional programmers a *brief* overview of the features of modern hardware that you must understand in order to write fast code. It will be a distillation of what have learned the last few years. This tutorial will use Julia because it allows these relatively low-level considerations to be demonstrated easily in a high-level, interactive language.
 # 
@@ -25,7 +25,7 @@
 # * Tuples
 # 
 # ### This is not a tutorial on benchmarking your code
-# To write fast code *in practise*, it is necessary to profile your code to find bottlenecks where your machine spends the majority of the time. One must benchmark different functions and approaches to find the fastest in practise. Julia (and other languages) have tools for exactly this purpose, but I will not cover them here.
+# To write fast code *in practice*, it is necessary to profile your code to find bottlenecks where your machine spends the majority of the time. One must benchmark different functions and approaches to find the fastest in practice. Julia (and other languages) have tools for exactly this purpose, but I will not cover them here.
 
 # ## Content
 # 
@@ -65,7 +65,7 @@ using BenchmarkTools
 # 
 # In this simple diagram, the arrows represent data flow in either direction. The diagram shows three important parts of a computer:
 # 
-# * The central processing usit (CPU) is a chip the size of a stamp. This is where all the computation actually occurs, the brain of the computer.
+# * The central processing unit (CPU) is a chip the size of a stamp. This is where all the computation actually occurs, the brain of the computer.
 # * Random access memory (RAM, or just "memory") is the short-term memory of the computer. This memory requires electrical power to maintain, and is lost when the computer is shut down. RAM serves as a temporary storage of data between the disk and the CPU. Much of time spent "loading" various applications and operating systems is actually spent moving data from disk to RAM and unpacking it there. A typical consumer laptop has around $10^{11}$ bits of RAM memory.
 # * The disk is a mass storage unit. This data on disk persists after power is shut down, so the disk contains the long-term memory of the computer. It is also much cheaper per gigabyte than RAM, with consumer PCs having around $10^{13}$ bits of disk space.
 
@@ -161,7 +161,7 @@ data = rand(UInt, 0x00000000000fffff);
 @btime random_access(data)
 #----------------------------------------------------------------------------
 
-# This also has implications for your data structures. Hash tables such as `Dict`s and `Set`s are inherently cache inefficient and almost always causes cache misses, whereas arrays don't.
+# This also has implications for your data structures. Hash tables such as `Dict`s and `Set`s are inherently cache inefficient and almost always cause cache misses, whereas arrays don't.
 # 
 # Many of the optimizations in this document indirectly impact cache use, so this is important to have in mind.
 
@@ -261,7 +261,7 @@ get_mem_layout(AlignmentTest)
 # 
 # The lines beginning with `;` are comments, and explain which section of the code the following instructions come from. They show the nested series of function calls, and where in the source code they are. You can see that `linear_access` calls `eachindex`, which calls `axes1`, which calls `axes`, which calls `size` and `map`, etc. Under the comment line containing the `size` call, we see the first CPU instruction. The instruction name is on the far left, `movq`. The name is composed of two parts, `mov`, the kind of instruction (to move a single integer of data), and a suffix `q`, short for "quad", which means 64-bit integer. There are the following suffixes:  `b` (byte, 8 bit), `w` (word, 16 bit), `l`, (long, 32 bit) and `q` (quad, 64 bit).
 # 
-# The next two columns in the instruction, `24(%rsi)` and `%rax` are the arguments to `movq`. These are the names of the registrers (we will return to registrers later) where the data to operate on are stored.
+# The next two columns in the instruction, `24(%rsi)` and `%rax` are the arguments to `movq`. These are the names of the registers (we will return to registers later) where the data to operate on are stored.
 # 
 # You can also see (in the larger display of assembly code) that the code is segmented into sections beginning with a name starting with "L", for example the last section `L131`. These sections are jumped between using if-statements, or *branches*. For example, the actual loop is marked with `L48`. You can see the following two instructions in the `L48` section:
 # 
@@ -269,7 +269,7 @@ get_mem_layout(AlignmentTest)
 #     cmpq    %r8, %rcx
 # 	jb      L48
 # ```
-# The first instruction `cmpq` (compare quad) compares the data in the two registrers, which hold the data for the length of the array, and the array index, respectively, and sets certain flags (wires) in the CPU based on the result. The next instruction `jb` (jump if below) makes a jump if the "below" flag is set in the CPU, which happens if the index is lower than the array length. You can see it jumps to `L48`, meaning this section repeat.
+# The first instruction `cmpq` (compare quad) compares the data in the two registers, which hold the data for the length of the array, and the array index, respectively, and sets certain flags (wires) in the CPU based on the result. The next instruction `jb` (jump if below) makes a jump if the "below" flag is set in the CPU, which happens if the index is lower than the array length. You can see it jumps to `L48`, meaning this section repeat.
 
 # ### Fast instruction, slow instruction
 # Not all CPU instructions are equally fast. Below is a table of selected CPU instructions with *very rough* estimates of how many clock cycles they take to execute.
@@ -319,7 +319,7 @@ code_native(divide_slow, (UInt,), debuginfo=:none)
 # ## Allocations and immutability<a id='allocations'></a>
 # As already mentioned, main RAM is much slower than the CPU cache. However, working in main RAM comes with an additional disadvantage: Your operating system (OS) keeps track of which process have access to which memory. If every process had access to all memory, then it would be trivially easy to make a program that scans your RAM for secret data such as bank passwords - or for one program to accidentally overwrite the memory of another program. Instead, every process is allocated a bunch of memory by the OS, and is only allowed to read or write to the allocated data.
 # 
-# The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Memory that is not kept track of will eventually be overwritten by other data. Allocation and deallocation takes a significant amount of time depending on the size of objects, from a few tens to hundreds of nanoseconds per allocation.
+# The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Memory that is not kept track of will eventually be overwritten by other data. Allocation and deallocation take a significant amount of time depending on the size of objects, from a few tens to hundreds of nanoseconds per allocation.
 # 
 # In programming languages such as Julia, Python, R and Java, deallocation is automatically done using a program called the *garbage collector* (GC). This program keeps track of which objects are rendered reachable by the programmer, and deallocates them. For example, if you do:
 
@@ -364,10 +364,10 @@ data = rand(UInt, 2^10);
 # 
 # For these reasons, performant code should keep allocations to a minimum. Note that the `@btime` macro prints the number and size of the allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will also be interested in reducing allocations.
 # 
-# ### Not all objects needs to be allocated
+# ### Not all objects need to be allocated
 # Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a simple data structure with a beginning and end, similar to a `Vector`. Data from the stack can only be accessed from the end, analogous to a `Vector` with only the two operations `push!` and `pop!`. These operations on the stack are very fast. When we talk about "allocations", however, we talk about data on the heap. Only the heap gives true random access.
 # 
-# Intuitively, it may seem obvious that all objects needs to be placed in RAM, must be able to be retrieved at any time by the program, and therefore needs to be allocated on the heap. And for some languages, like Python, this is true. However, this is not true in Julia. Integers, for example, can often be placed on the stack.
+# Intuitively, it may seem obvious that all objects need to be placed in RAM, must be able to be retrieved at any time by the program, and therefore need to be allocated on the heap. And for some languages, like Python, this is true. However, this is not true in Julia. Integers, for example, can often be placed on the stack.
 # 
 # Why do some objects need to be heap allocated, while others can be stack allocated? To be stack-allocated, the compiler needs to know for certain that:
 # 
@@ -400,7 +400,7 @@ end
 @code_native StackAllocated(1)
 #----------------------------------------------------------------------------
 
-# Because bitstypes dont need to be stored on the heap and can be copied freely, bitstypes are stored *inline* in arrays. This means that bitstype objects can be stored directly inside the array's memory. Non-bitstypes have a unique identity and location on the heap. They are distinguishable from copies, so cannot be freely copied, and so arrays contain reference to the memory location on the heap where they are stored. Accessing such an object from an array then means first accessing the array to get the memory location, and then accessing the object itself using that memory location. Beside the double memory access, objects are stored less efficiently on the heap, meaning that more memory needs to be coped to CPU caches, meaning more cache misses. Hence, even when stored on the heap in an array, bitstypes can be stored more effectively.
+# Because bitstypes dont need to be stored on the heap and can be copied freely, bitstypes are stored *inline* in arrays. This means that bitstype objects can be stored directly inside the array's memory. Non-bitstypes have a unique identity and location on the heap. They are distinguishable from copies, so cannot be freely copied, and so arrays contain reference to the memory location on the heap where they are stored. Accessing such an object from an array then means first accessing the array to get the memory location, and then accessing the object itself using that memory location. Beside the double memory access, objects are stored less efficiently on the heap, meaning that more memory needs to be copied to CPU caches, meaning more cache misses. Hence, even when stored on the heap in an array, bitstypes can be stored more effectively.
 
 Base.:+(x::Int, y::AllocatedInteger) = x + y.x
 Base.:+(x::AllocatedInteger, y::AllocatedInteger) = x.x + y.x
@@ -439,7 +439,7 @@ println("Data at address ", repr(first_data), ": ",
 
 # There is no register that can do 128-bit additions. First the lower 64 bits must be added using a `addq` instruction, fitting in a register. Then the upper bits are added with a `adcxq` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
 # 
-# The small size of the registers serves as a bottleneck for CPU throughput: It can only operate on one integer/float at a time. In order to sidestep this, modern CPUs contain specialized 256-bit registers (or 128-bit in older CPUs, or 512-bit in the brand new ones) than can hold 4 64-bit integers/floats at once, or 8 32-bit integers, etc. Confusingly, the data in such wide registers are termed "vectors". The CPU have access to instructions that can perform various CPU operations on vectors, operating on 4 64-bit integers in one instruction. This is called "single instruction, multiple data", *SIMD*, or *vectorization*. Notably, a 4x64 bit operation is *not* the same as a 256-bit operation, e.g. there is no carry-over with between the 4 64-bit integers when you add two vectors. Instead, a 256-bit vector operation equivalent to 4 individual 64-bit operations.
+# The small size of the registers serves as a bottleneck for CPU throughput: It can only operate on one integer/float at a time. In order to sidestep this, modern CPUs contain specialized 256-bit registers (or 128-bit in older CPUs, or 512-bit in the brand new ones) than can hold 4 64-bit integers/floats at once, or 8 32-bit integers, etc. Confusingly, the data in such wide registers are termed "vectors". The CPU have access to instructions that can perform various CPU operations on vectors, operating on 4 64-bit integers in one instruction. This is called "single instruction, multiple data", *SIMD*, or *vectorization*. Notably, a 4x64 bit operation is *not* the same as a 256-bit operation, e.g. there is no carry-over with between the 4 64-bit integers when you add two vectors. Instead, a 256-bit vector operation is equivalent to 4 individual 64-bit operations.
 # 
 # We can illustrate this with the following example:
 
@@ -566,7 +566,7 @@ data = rand(UInt, 10000);
 # The timings you observe here will depend on whether your compiler is clever enough to realize that the computation in the first function can be expressed as a `popcnt` instruction, and thus will be compiled to that. On my computer, the compiler is not able to make that inference, and the second function achieves the same result more than 100x faster.
 # 
 # ### Call any CPU instruction
-# Julia makes it possible to call CPU instructions direcly. This is not generally adviced, since not all your users will have access to the same CPU with the same instructions.
+# Julia makes it possible to call CPU instructions direcly. This is not generally advised, since not all your users will have access to the same CPU with the same instructions.
 # 
 # The latest CPUs contain specialized instructions for AES encryption and SHA256 hashing. If you wish to call these instructions, you can call Julia's backend compiler, LLVM, directly. In the example below, I create a function which calls the `vaesenc` (one round of AES encryption) instruction directly:
 
@@ -611,7 +611,7 @@ code_native(call_plus, (Int,), debuginfo=:none)
 # 
 # Instead, the compiler uses heuristics (rules of thumb) to determine when a function is small enough for inlining to increase performance. These heuristics are not bulletproof, so Julia provides the macros `@noinline`, which prevents inlining of small functions (useful for e.g. functions that raises errors, which must be assumed to be called rarely), and `@inline`, which does not *force* the compiler to inline, but *strongly suggests* to the compiler that it ought to inline the function.
 # 
-# If code contains a a time-sensitive section, for example an inner loop, it is important to look at the assembly code to verify that small functions in the loop is inlined. For example, in [this line in my kmer hashing code](https://github.com/jakobnissen/Kash.jl/blob/b9a6e71acf9651d3614f92d5d4b29ffd136bcb5c/src/kmersketch.jl#L41), overall minhashing performance drops by a factor of two if this `@inline` annotation is removed.
+# If code contains a time-sensitive section, for example an inner loop, it is important to look at the assembly code to verify that small functions in the loop is inlined. For example, in [this line in my kmer hashing code](https://github.com/jakobnissen/Kash.jl/blob/b9a6e71acf9651d3614f92d5d4b29ffd136bcb5c/src/kmersketch.jl#L41), overall minhashing performance drops by a factor of two if this `@inline` annotation is removed.
 # 
 # An extreme difference between inlining and no inlining can be demonstrated thus:
 
@@ -668,7 +668,7 @@ end
 # end
 # ```
 # 
-# The result is obviously the same if we assume the length of the vector is divisible by four. If the length is not divisible by four, we could simple use the function above to sum the first N - N\%4 elements and add the last few elements in another loop. Despite the functionally identical result, the the assembly of the loop is different and may look something like:
+# The result is obviously the same if we assume the length of the vector is divisible by four. If the length is not divisible by four, we could simply use the function above to sum the first N - N\%4 elements and add the last few elements in another loop. Despite the functionally identical result, the assembly of the loop is different and may look something like:
 # 
 # ```
 # L1:
@@ -699,7 +699,7 @@ end
 # 
 # This also means that CPU instructions are being "queued" into the *pipeline* some time before they are actually executed in the final execute step. So what happens when the CPU encounters a branch (i.e. a jump instruction)? It can't know which instruction to queue next, because that depends on the instruction that it just put into the queue and which has yet to be executed.
 # 
-# Modern CPUs makes use of *branch prediction*. The CPU has a *branch predictor* circuit, which guesses the correct branch based on which branches were recently taken. In essense, the branch predictor attempts to learn simple patterns in which branches are taken in code, while the code is running. After queueing a branch, the CPU immediately queues instructions from whatever branch predicted by the branch predictor. The correctness of the guess is verified later, when the queued branch is being executed. If the guess was correct, great, the CPU saved time by guessing. If not, the CPU has to empty the pipeline and discard all computations since the initial guess, and then start over. This process causes a delay of a few nanoseconds.
+# Modern CPUs make use of *branch prediction*. The CPU has a *branch predictor* circuit, which guesses the correct branch based on which branches were recently taken. In essense, the branch predictor attempts to learn simple patterns in which branches are taken in code, while the code is running. After queueing a branch, the CPU immediately queues instructions from whatever branch predicted by the branch predictor. The correctness of the guess is verified later, when the queued branch is being executed. If the guess was correct, great, the CPU saved time by guessing. If not, the CPU has to empty the pipeline and discard all computations since the initial guess, and then start over. This process causes a delay of a few nanoseconds.
 # 
 # For the programmer, this means that the speed of an if-statement depends on how easy it is to guess. If it is trivially easy to guess, the branch predictor will be correct almost all the time, and the if statement will take no longer than a simple instruction, typically 1 clock cycle. In a situation where the branching is random, it will be wrong about 50% of the time, and each misprediction may cost around 10 clock cycles.
 # 
@@ -764,7 +764,7 @@ src_all_odd = [2i+1 for i in src_random];
 @btime copy_odds!(dst, src_all_odd);
 #----------------------------------------------------------------------------
 
-# Which contain no other branches than the one caused by the loop itself (which is easily predictable), and results in speeds a somewhat worse than the perfectly predicted one, but much better for random data.
+# Which contains no other branches than the one caused by the loop itself (which is easily predictable), and results in speeds somewhat worse than the perfectly predicted one, but much better for random data.
 # 
 # The compiler will often remove branches in your code when the same computation can be done using other instructions. When the compiler fails to do so, Julia offers the `ifelse` function, which sometimes can help elide branching.
 
@@ -784,9 +784,9 @@ src_all_odd = [2i+1 for i in src_random];
 # 
 # Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel. Furthermore, many CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors. For example, I am writing this on a laptop with an Intel Core i5-8259U CPU. This CPU has 4 cores, but various operating systems like Windows or Linux would show 8 "CPUs" in the systems monitor program.
 # 
-# Hyperthreading only really matter when your threads are sometimes prevented from doing work. Besides CPU-internal causes like cache misses, a thread can also be paused because it is waiting for an external resource like a webserver or data from a disk. If you are writing a program where some threads spend a significant time idling, the core can be used by the other thread, and hyperthreading can show its value.
+# Hyperthreading only really matters when your threads are sometimes prevented from doing work. Besides CPU-internal causes like cache misses, a thread can also be paused because it is waiting for an external resource like a webserver or data from a disk. If you are writing a program where some threads spend a significant time idling, the core can be used by the other thread, and hyperthreading can show its value.
 # 
-# Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. You can set the enviromental variable `JULIA_NUM_THREADS` before starting Julia. I have 4 cores on this CPU, both with hyperthreading so I have set the number of threads to 8:
+# Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. You can set the environment variable `JULIA_NUM_THREADS` before starting Julia. I have 4 cores on this CPU, both with hyperthreading so I have set the number of threads to 8:
 
 Threads.nthreads()
 #----------------------------------------------------------------------------
@@ -822,12 +822,12 @@ end
 
 # You can see that with this task, my computer can run 8 jobs in parallel almost as fast as it can run 1. But 16 jobs takes much longer.
 # 
-# For CPU-contrained programs, the core is kept busy with only one thread, and there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Most workloads are not that optimized and can really benefit from hyperthreading, so we'll stick with 8 threads for now.
+# For CPU-constrained programs, the core is kept busy with only one thread, and there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Most workloads are not that optimized and can really benefit from hyperthreading, so we'll stick with 8 threads for now.
 # 
 # #### Parallelizability
 # Multithreading is more difficult that any of the other optimizations, and should be one of the last tools a programmer reaches for. However, it is also an impactful optimization. Compute clusters usually contain CPUs with tens of CPU cores, offering a massive potential speed boost ripe for picking.
 # 
-# A prerequisite for efficient use of multithreading is that you computation is able to be broken up into multiple chunks that can be worked on independently. Luckily the majority of compute-heavy tasks (at least in my field of work, bioinformatics), contain sub-problems that are *embarassingly parallel*. This means that there is a natural and easy way to break it into sub-problems that can be processed independently. For example, if a certain __independent__ computation is required for 100 genes, it is natural to use one thread for each gene.
+# A prerequisite for efficient use of multithreading is that your computation is able to be broken up into multiple chunks that can be worked on independently. Luckily the majority of compute-heavy tasks (at least in my field of work, bioinformatics), contain sub-problems that are *embarassingly parallel*. This means that there is a natural and easy way to break it into sub-problems that can be processed independently. For example, if a certain __independent__ computation is required for 100 genes, it is natural to use one thread for each gene.
 # 
 # Let's have an example of a small embarrasingly parallel problem. We want to construct a [Julia set](https://en.wikipedia.org/wiki/Julia_set). Julia sets are named after Gaston Julia, and have nothing to do with the Julia language. Julia sets are (often) fractal sets of complex numbers. By mapping the real and complex component of the set's members to the X and Y pixel value of a screen, one can generate the LSD-trippy images associated with fractals.
 # 
