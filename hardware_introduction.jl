@@ -45,11 +45,10 @@
 
 # ## Before you begin: Install packages
 
-## Install packages
-using Pkg
-
-Pkg.add("BenchmarkTools", io=devnull)
-Pkg.add("StaticArrays", io=devnull)
+## If you don't already have these packages installed, outcomment these lines and run it:
+## using Pkg
+## Pkg.add("BenchmarkTools")
+## Pkg.add("StaticArrays")
 
 using StaticArrays
 using BenchmarkTools
