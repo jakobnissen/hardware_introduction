@@ -1,5 +1,7 @@
 # # What scientists must know about hardware to write fast code
 # 
+# __Find this notebook at https://github.com/jakobnissen/hardware_introduction__
+# 
 # Programming is used in many fields of science today, where individual scientists often have to write custom code for their own projects. For most scientists, however, computer science is not their field of expertise; They have learned programming by necessity. I count myself as one of them. While we may be reasonably familiar with the *software* side of programming, we rarely have even a basic understanding of how computer *hardware* impacts code performance.
 # 
 # The aim of this tutorial is to give non-professional programmers a *brief* overview of the features of modern hardware that you must understand in order to write fast code. It will be a distillation of what have learned the last few years. This tutorial will use Julia because it allows these relatively low-level considerations to be demonstrated easily in a high-level, interactive language.
@@ -84,7 +86,7 @@ function test_file(path)
         read(file, UInt8)
     end
 end
-@time test_file("../some_file.txt")
+@time test_file("test_file")
 
 ## This test may seem weirdly constructed, but I use a Set to force cache misses to compare
 ## main RAM (and not cache) with disk.
@@ -175,7 +177,7 @@ data = rand(UInt, 0x00000000000fffff);
 function alignment_test(data::Vector{UInt}, offset::Integer)
     n = zero(UInt)
     mask = length(data) - 8
-    GC.@preserve data begin #### protect the array from moving in memory
+    GC.@preserve data begin # protect the array from moving in memory
         ptr = pointer(data) + (offset & 63)
         for i in 1:1024
             n ⊻= unsafe_load(ptr, (n & mask + 1) % Int)
@@ -203,9 +205,9 @@ memory_address = reinterpret(UInt, pointer(data))
 # It would still be possible for an e.g. 7-byte object to be misaligned in an array. In an array of 7-byte objects, the 10th object would be placed at byte offset $7 \times (10-1) = 63$, and the object would straddle the cache line. However, the compiler usually does not allow struct with a nonstandard size for this reason. If we define a 7-byte struct:
 
 struct AlignmentTest
-    a::UInt32 #### 4 bytes +
-    b::UInt16 #### 2 bytes +
-    c::UInt8  #### 1 byte = 7 bytes?
+    a::UInt32 # 4 bytes +
+    b::UInt16 # 2 bytes +
+    c::UInt8  # 1 byte = 7 bytes?
 end
 #----------------------------------------------------------------------------
 
@@ -453,10 +455,12 @@ code_native(+, (typeof(a), typeof(a)), debuginfo=:none)
 
 # Here, two 8\*32 bit vectors are added together in one single instruction. You can see the CPU makes use of a single `vpaddd` (vector packed add double) instruction to add 8 32-bit integers, as well as the corresponding move instruction `vmovdqu`. Note that vector CPU instructions begin with `v`.
 # 
-# ### Automatic vectorization
+# It's worth mentioning the interaction between SIMD and alignment: If a series of 256-bit (32-byte) SIMD loads are misaligned, then up to half the loads could cross cache line boundaries, as opposed to just 1/8th of 8-byte loads. Thus, alignment is a much more serious issue when using SIMD. Since array beginnings are always aligned, this is usually not an issue, but in cases where you are not guaranteed to start from an aligned starting point, such as with matrix operations, this may make a significant difference. In brand new CPUs with 512-bit registers, the issues is even worse as the SIMD size is the same as the cache line size, so *all* loads would be misaligned if the initial load is.
+# 
 # SIMD vectorization of e.g. 64-bit integers may increase throughput by almost 4x, so it is of huge importance in high-performance programming. Compilers will automatically vectorize operations if they can. What can prevent this automatic vectorization?
 # 
-# Because vectorized operations operates on multiple data at once, it is not possible to interrupt the loop at an arbitrary point. For example, if 4 64-bit integers are processed at a time, it is not possible to stop the loop after 3 integers have been processed. Suppose you had a loop like this:
+# ### SIMD needs uninterrupted iteration of fixed length
+# Because vectorized operations operates on multiple data at once, it is not possible to interrupt the loop at an arbitrary point. For example, if 4 64-bit integers are processed in one clock cycle, it is not possible to stop a SIMD loop after 3 integers have been processed. Suppose you had a loop like this:
 # 
 # ```
 # for i in 1:8
@@ -469,7 +473,11 @@ code_native(+, (typeof(a), typeof(a)), debuginfo=:none)
 # 
 # Here, the loop could end on any iteration due to the break statement. Therefore, any SIMD instruction which loaded in multiple integers could operate on data *after* the loop is supposed to break, i.e. data which is never supposed to be read. This would be wrong behaviour, and so, the compiler cannot use SIMD instructions.
 # 
-# A good rule of thumb is that you should not have any branches (i.e. if-statements) in the loop at all if you want it to SIMD-vectorize. In fact, even boundschecking, i.e. checking that you are not indexing outside the bounds of a vector, causes a branch. After all, if the code is supposed to raise a bounds error after 3 iterations, even a single SIMD operation would be wrong! To achieve SIMD vectorization then, all boundschecks must be disabled. We can use this do demonstrate the impact of SIMD:
+# A good rule of thumb is that simd needs:
+# * A loop with a predetermined length, so it knows when to stop, and
+# * A loop with no branches (i.e. if-statements) in the loop
+# 
+# In fact, even boundschecking, i.e. checking that you are not indexing outside the bounds of a vector, causes a branch. After all, if the code is supposed to raise a bounds error after 3 iterations, even a single SIMD operation would be wrong! To achieve SIMD vectorization then, all boundschecks must be disabled. We can use this do demonstrate the impact of SIMD:
 
 function sum_nosimd(x::Vector)
     n = zero(eltype(x))
@@ -498,15 +506,55 @@ data = rand(UInt64, 4096);
 
 # On my computer, the SIMD code is 10x faster than the non-SIMD code. SIMD alone accounts for only about 4x improvements (since we moved from 64-bits per iteration to 256 bits per iteration). The rest of the gain comes from not spending time checking the bounds and from automatic loop unrolling (explained later), which is also made possible by the `@inbounds` annotation.
 # 
-# It's worth mentioning the interaction between SIMD and alignment: If a series of 256-bit (32-byte) SIMD loads are misaligned, then up to half the loads could cross cache line boundaries, as opposed to just 1/8th of 8-byte loads. Thus, alignment is a much more serious issue when using SIMD. Since array beginnings are always aligned, this is usually not an issue, but in cases where you are not guaranteed to start from an aligned starting point, such as with matrix operations, this may make a significant difference. In brand new CPUs with 512-bit registers, the issues is even worse as the SIMD size is the same as the cache line size, so *all* loads would be misaligned if the initial load is.
+# ### SIMD needs a loop where loop order doesn't matter
+# SIMD can change the order in which elements in an array is processed. If the result of any iteration depends on any previous iteration such that the elements can't be re-ordered, the compiler will usually not SIMD-vectorize. Often when a loop won't auto-vectorize, it's due to subtleties in which data moves around in registers means that there will be some hidden memory dependency between elements in an array.
+# 
+# Imagine we want to sum some 64-bit integers in an array using SIMD. For simplicity, let's say the array has 8 elements, `A`, `B`, `C` ... `H`. In an ordinary non-SIMD loop, the additions would be done like so:
+# 
+# $$(((((((A + B) + C) + D) + E) + F) + G) + H)$$
+# 
+# Whereas when loading the integers using SIMD, four 64-bit integers would be loaded into one vector `<A, B, C, D>`, and the other four into another `<E, F, G, H>`. The two vectors would be added: `<A+E, B+F, C+G, D+H>`. After the loop, the four integers in the resulting vector would be added. So other overall order would be:
+# 
+# $$((((A + E) + (B + F)) + (C + G)) + (D + H))$$
+# 
+# Perhaps surprisingly, addition of floating point numbers can give different results depending on the order (i.e. float addition is not associative):
+
+x = eps(1.0) * 0.4
+1.0 + (x + x) == (1.0 + x) + x
+#----------------------------------------------------------------------------
+
+# for this reason, float addition will not auto-vectorize:
+
+data = rand(Float64, 4096)
+@btime sum_nosimd(data)
+@btime sum_simd(data);
+#----------------------------------------------------------------------------
+
+# However, high-performance programming languages usually provide a command to tell the compiler it's alright to re-order the loop, even for non-associative loops. In Julia, this command is the `@simd` macro:
+
+function sum_simd(x::Vector)
+    n = zero(eltype(x))
+    ## Here we add the `@simd` macro to allow SIMD of floats
+    @inbounds @simd for i in eachindex(x)
+        n += x[i]
+    end
+    return n
+end
+
+data = rand(Float64, 4096)
+@btime sum_nosimd(data)
+@btime sum_simd(data);
+#----------------------------------------------------------------------------
+
+# Julia also provides the macro `@simd ivdep` which further tells the compiler that there are no memory-dependencies in the loop order. However, I *strongly discourage* the use of this macro, unless you *really* know what you're doing. In general, the compiler knows best when a loop has memory dependencies, and misuse of `@simd ivdep` can very easily lead to bugs that are hard to detect.
 
 # ## Struct of arrays<a id='soa'></a>
 # If we create an array containing four `AlignmentTest` objects `A`, `B`, `C` and `D`, the objects will lie end to end in the array, like this:
-#     
+# 
 #     Objects: |      A        |       B       |       C       |        D      |
 #     Fields:  |   a   | b |c| |   a   | b |c| |   a   | b |c| |   a   | b |c| |
 #     Byte:     1               9              17              25              33
-#     
+# 
 # Note again that byte no. 8, 16, 24 and 32 are empty to preserve alignment, wasting memory.
 # Now suppose you want to do an operation on all the `.a` fields of the structs. Because the `.a` fields are scattered 8 bytes apart, SIMD operations are much less efficient (loading up to 4 fields at a time) than if all the `.a` fields were stored together (where 8 fields could fit in a 256-bit register). When working with the `.a` fields only, the entire 64-byte cache lines would be read in, of which only half, or 32 bytes would be useful. Not only does this cause more cache misses, we also need instructions to pick out the half of the data from the SIMD registers we need.
 # 
@@ -516,7 +564,7 @@ struct AlignmentTestVector
     a::Vector{UInt32}
     b::Vector{UInt16}
     c::Vector{UInt8}
-end   
+end
 #----------------------------------------------------------------------------
 
 # With the following memory layout for each field:
@@ -525,7 +573,7 @@ end
 #     .a |   A   |   B   |   C   |   D   |
 #     .b | A | B | C | D |
 #     .c |A|B|C|D|
-#     
+# 
 # Alignment is no longer a problem, no space is wasted on padding. When running through all the `a` fields, all cache lines contain full 64 bytes of relevant data, so SIMD operations do not need extra operations to pick out the relevant data:
 
 Base.rand(::Type{AlignmentTest}) = AlignmentTest(rand(UInt32), rand(UInt16), rand(UInt8))
@@ -710,9 +758,9 @@ end;
 ## Copy all odd numbers from src to dst.
 function copy_odds!(dst::Vector{UInt}, src::Vector{UInt})
     write_index = 1
-    @inbounds for i in eachindex(src) #### <--- this branch is trivially easy to predict
+    @inbounds for i in eachindex(src) # <--- this branch is trivially easy to predict
         v = src[i]
-        if isodd(v)  #### <--- this is the branch we want to predict
+        if isodd(v)  # <--- this is the branch we want to predict
             dst[write_index] = v
             write_index += 1
         end
@@ -812,7 +860,7 @@ function parallel_sleep(n_jobs)
     return sum(fetch, jobs)
 end
 
-parallel_sleep(1); ##run once to compile it 
+parallel_sleep(1); # run once to compile it
 #----------------------------------------------------------------------------
 
 for njobs in (1, 4, 8, 16)
