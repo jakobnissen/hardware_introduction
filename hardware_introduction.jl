@@ -54,6 +54,11 @@
 
 using StaticArrays
 using BenchmarkTools
+
+"Print median elapsed time of benchmark"
+function print_median(trial)
+    println("Median time: ", BenchmarkTools.prettytime(median(trial).time))
+end;
 #----------------------------------------------------------------------------
 
 # ## The basic structure of computer hardware
@@ -76,7 +81,7 @@ using BenchmarkTools
 # 
 # To write fast code, you must therefore make sure to have your working data in RAM, and limit disk writes as much as possible.
 # 
-# The following example serves to illustrate the difference in speed:
+# The following example serves to illustrate the difference in speed: The first function opens a file, accesses one byte from the file, and closes it again. The second function randomly accesses 1,000,000 integers from RAM.
 
 ## Open a file
 function test_file(path)
@@ -86,20 +91,20 @@ function test_file(path)
         read(file, UInt8)
     end
 end
-@time test_file("testfile")
+@time test_file("test_file")
 
-## This test may seem weirdly constructed, but I use a Set to force cache misses to compare
-## main RAM (and not cache) with disk.
-data = Set(1:10000000)
-function test_RAM(data)
-    n = 0
-    for i in 1:25000
-        n += i in data
+## Randomly access data N times
+function random_access(data::Vector{UInt}, N::Integer)
+    n = rand(UInt)
+    mask = length(data) - 1
+    @inbounds for i in 1:N
+        n = (n >>> 7) ⊻ data[n & mask + 1]
     end
-    n
+    return n
 end
 
-@time test_RAM(data);
+data = rand(UInt, 2^24)
+@time random_access(data, 1000000);
 #----------------------------------------------------------------------------
 
 # Benchmarking this is a little tricky, because the *first* invokation will include the compilation times of both functions. And in the *second* invokation, your operating system will have stored a copy of the file (or *cached* the file) in RAM, making the file seek almost instant. To time it properly, run it once, then *change the file*, and run it again. So in fact, we should update our computer diagram:
@@ -109,7 +114,7 @@ end
 # [CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]
 # </font></center><br>
 # 
-# On my computer, finding a single byte in a file takes about 13 miliseconds, and finding 25,000 integers from a `Set` takes 9.5 miliseconds. So RAM is on the order of 34,000 times faster than disk.
+# On my computer, finding a single byte in a file (including opening and closing the file) takes about 13 miliseconds, and accessing 1,000,000 integers from memory takes 131 miliseconds. So RAM is on the order of 10,000 times faster than disk.
 # 
 # When working with data too large to fit into RAM, load in the data chunk by chunk, e.g. one line at a time, and operate on that. That way, you don't need *random access* to your file and thus need to waste time on extra seeks, but only sequential access. And you *must* strive to write your program such that any input files are only read through *once*, not multiple times.
 # 
@@ -138,35 +143,22 @@ end
 # 
 # * When reading data from RAM, read it sequentially, such that you mostly have the next data you will be using in cache, instead of in a random order. In fact, modern CPUs will detect if you are reading in data sequentially, and *prefetch* upcoming data, that is, fetching the next chunk while the current chunk is being processed, reducing delays caused by cache misses.
 # 
-# The following example illustrates two simple functions. The second, `random_access` begins with a random `n`. It then uses the random `n` to access an index in the array, updating `n`. This way, it jumps randomly around the array, sampling a fixed number of elements.
-# 
-# The first function, `linear_access` do the same computation as `random_access`, but uses `i` instead of `n` to  access the array, so it access the data in a linear fashion. Hence, the only difference is the memory access pattern.
+# To illustrate this, let's compare the time spent on the `random_access` function above with a new function `linear_access`. This function performans the same computation as `random_access`, but uses `i` instead of `n` to  access the array, so it access the data in a linear fashion. Hence, the only difference is the memory access pattern.
 # 
 # Notice the large discrepency in time spent.
 
-function linear_access(data::Vector{UInt})
+function linear_access(data::Vector{UInt}, N::Integer)
     n = rand(UInt)
     mask = length(data) - 1
-    for i in 1:4096
+    for i in 1:N
         n = (n >>> 7) ⊻ data[i & mask + 1]
     end
     return n
 end
-
-function random_access(data::Vector{UInt})
-    n = rand(UInt)
-    mask = length(data) - 1
-    for i in 1:4096
-        n = (n >>> 7) ⊻ data[n & mask + 1]
-    end
-    return n
-end
-
-data = rand(UInt, 2^22);
 #----------------------------------------------------------------------------
 
-@btime linear_access(data)
-@btime random_access(data);
+print_median(@benchmark random_access(data, 4096))
+print_median(@benchmark linear_access(data, 4096))
 #----------------------------------------------------------------------------
 
 # This also has implications for your data structures. Hash tables such as `Dict`s and `Set`s are inherently cache inefficient and almost always cause cache misses, whereas arrays don't.
@@ -197,15 +189,15 @@ end
 data = rand(UInt, 256 + 8);
 #----------------------------------------------------------------------------
 
-@btime alignment_test(data, 0)
-@btime alignment_test(data, 60);
+print_median(@benchmark alignment_test(data, 0))
+print_median(@benchmark alignment_test(data, 60))
 #----------------------------------------------------------------------------
 
 # In the example above, the short vector easily fit into cache. If we increase the vector size, we will force cache misses. Note that the effect of misalignment is dwarfed by the time wasted on cache misses:
 
-data = rand(UInt, 1 << 22 + 8)
-@btime alignment_test(data, 10)
-@btime alignment_test(data, 60);
+data = rand(UInt, 1 << 24 + 8)
+print_median(@benchmark alignment_test(data, 10))
+print_median(@benchmark alignment_test(data, 60))
 #----------------------------------------------------------------------------
 
 # Fortunately, the compiler does a few tricks to make it less likely that you will access misaligned data. First, Julia (and other compiled languages) always places new objects in memory at the boundaries of cache lines. When an object is placed right at the boundary, we say that it is *aligned*. Julia also aligns the beginning of larger arrays:
@@ -251,7 +243,7 @@ get_mem_layout(AlignmentTest)
 # 
 # Viewing assembly code will be useful to understand some of the following sections which pertain to CPU instructions.
 # 
-# In Julia, we can easily inspect the compiled assembly code using the `code_native` function or the equivalent `@code_native` macro. Let's use the `linear_access` function from earlier:
+# In Julia, we can easily inspect the compiled assembly code using the `code_native` function or the equivalent `@code_native` macro. We can do this for a simple function:
 
 ## View assembly code generated from this function call
 function foo(x)
@@ -272,13 +264,13 @@ end
 # 
 # The next two columns in the instruction, `24(%rdi)` and `%rax` are the arguments to `movq`. These are the names of the registers (we will return to registers later) where the data to operate on are stored.
 # 
-# You can also see (in the larger display of assembly code) that the code is segmented into sections beginning with a name starting with "L", for example there's a section `L32`. These sections are jumped between using if-statements, or *branches*. Here, section `L32` marks the actual loop. You can see the following two instructions in the `L32` section:
+# You can also see (in the larger display of assembly code) that the code is segmented into sections beginning with a name starting with "L", for example there's a section `L48`. These sections are jumped between using if-statements, or *branches*. Here, section `L48` marks the actual loop. You can see the following two instructions in the `L48` section:
 # 
 # ```
 # ; ││┌ @ promotion.jl:401 within `=='
-# 	cmpq	$1, %rdi
+#      cmpq    $1, %rdi
 # ; │└└
-# 	jne	L32
+#      jne     L48
 # ```
 # 
 # The first instruction `cmpq` (compare quad) compares the data in registry `rdi`, which hold the data for the number of iterations left (plus one), with the number 1, and sets certain flags (wires) in the CPU based on the result. The next instruction `jne` (jump if not equal) makes a jump if the "equal" flag is not set in the CPU, which happens if there is one or more iterations left. You can see it jumps to `L48`, meaning this section repeat.
@@ -318,10 +310,10 @@ end
 # 
 # |Delay                  |Cycles|
 # |-----------------------|----|
-# |move memory from cache |     1
-# |misaligned memory read |    10
-# |cache miss             |   500
-# |read from disk         | 35000
+# |move memory from cache |        1
+# |misaligned memory read |       10
+# |cache miss             |      500
+# |read from disk         | 5000000
 
 # If you have an inner loop executing millions of times, it may pay off to inspect the generated assembly code for the loop and check if you can express the computation in terms of fast CPU instructions. For example, if you have an integer you know to be 0 or above, and you want to divide it by 8 (discarding any remainder), you can instead do a bitshift, since bitshifts are way faster than integer division:
 
@@ -770,9 +762,7 @@ end;
 # Notice also that the compiler chooses to use 4 different `ymm` SIMD registers, `ymm0` to `ymm3`, whereas in my example assembly code, I just used one register `rax`. This is because, if you use 4 independent registers, then you don't need to wait for one `vpaddq` to complete (remember, it had a ~3 clock cycle latency) before the CPU can begin the next.
 
 # ## Branch prediction<a id='branches'></a>
-# When a CPU executes instructions, every instruction needs to go through multiple steps, classically the three "fetch", "decode" and "execute" steps, each taking one clock cycle or more. Thus, a CPU instruction must take multiple clock cycles. However, the steps use different circuits of the CPU, and so while one instruction is being executed, another is being decoded and a third is being fetched. This results in much faster throughput, in theory one instruction per cycle.
-# 
-# This also means that CPU instructions are being "queued" into the *pipeline* some time before they are actually executed in the final execute step. So what happens when the CPU encounters a branch (i.e. a jump instruction)? It can't know which instruction to queue next, because that depends on the instruction that it just put into the queue and which has yet to be executed.
+# As mentioned previously, CPU instructions take multiple cycles to complete, but may be queued into the CPU before the previous instruction has finished computing. So what happens when the CPU encounters a branch (i.e. a jump instruction)? It can't know which instruction to queue next, because that depends on the instruction that it just put into the queue and which has yet to be executed.
 # 
 # Modern CPUs make use of *branch prediction*. The CPU has a *branch predictor* circuit, which guesses the correct branch based on which branches were recently taken. In essense, the branch predictor attempts to learn simple patterns in which branches are taken in code, while the code is running. After queueing a branch, the CPU immediately queues instructions from whatever branch predicted by the branch predictor. The correctness of the guess is verified later, when the queued branch is being executed. If the guess was correct, great, the CPU saved time by guessing. If not, the CPU has to empty the pipeline and discard all computations since the initial guess, and then start over. This process causes a delay of a few nanoseconds.
 # 
@@ -933,7 +923,7 @@ end
 
 "Create a Julia fractal image"
 function julia()
-    M = Matrix{UInt8}(undef, 5000, 5000)
+    M = Matrix{UInt8}(undef, 10000, 5000)
     for (x, real) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 2)))
         fill_column!(M, x, real)
     end
@@ -944,13 +934,13 @@ end;
 @time M = julia();
 #----------------------------------------------------------------------------
 
-# That took around 3 seconds on my computer. Now for a parallel one:
+# That took around 5 seconds on my computer. Now for a parallel one:
 
 function recursive_fill_columns!(M::Matrix, cols::UnitRange)
     F, L = first(cols), last(cols)
     ## If only one column, fill it using fill_column!
     if F == L
-        r = range(-1.0f0,1.0f0,length=5000)[F]
+        r = range(-1.0f0,1.0f0,length=size(M, 1))[F]
         fill_column!(M, F, r)
     ## Else divide the range of columns in two, spawning a new task for each half
     else
@@ -962,8 +952,8 @@ function recursive_fill_columns!(M::Matrix, cols::UnitRange)
 end
 
 function julia()
-    M = Matrix{UInt8}(undef, 5000, 5000)
-    recursive_fill_columns!(M, 1:5000)
+    M = Matrix{UInt8}(undef, 10000, 5000)
+    recursive_fill_columns!(M, 1:size(M, 2))
     return M
 end;
 #----------------------------------------------------------------------------
@@ -971,7 +961,7 @@ end;
 @time M = julia();
 #----------------------------------------------------------------------------
 
-# This is almost 7 times as fast! This is close to the best case scenario for 8 threads, only possible for near-perfect embarrasingly parallel tasks.
+# This is almost 6 times as fast! This is close to the best case scenario for 8 threads, only possible for near-perfect embarrasingly parallel tasks.
 # 
 # Despite the potential for great gains, in my opinion, multithreading should be one of the last resorts for performance improvements, for three reasons:
 # 
