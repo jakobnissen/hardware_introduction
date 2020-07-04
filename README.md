@@ -1,6 +1,8 @@
 # What scientists must know about hardware to write fast code
 
-This document is present both in a Jupyter Notebook (.ipynb) format and a Literate.jl (.jl) format. I recommend reading the .ipynb format. It may be rendered in your browser here on GitHub, or preferably run in Jupyter using an IJulia kernel.
+This blog post is hosted on the BioJulia website: https://biojulia.net/post/hardware/
+
+This document is written as a Jupyter Notebook. (.ipynb format). If you can, I recommend running the code in Jupyter using an IJulia kernel so you can play around with it and learn. Alternatively, read it on BioJulia's website.
 
 ### This notebook covers:
 * Why you must minimize disk access
@@ -19,4 +21,4 @@ This document is present both in a Jupyter Notebook (.ipynb) format and a Litera
 
 ### How to contribute
 
-Pull requests (PRs) are welcome. *Please only modify the `.jl` file in your PR*. Unlike the .ipynb file, .jl files are plain text files and play much more nicely with git, making it easier to review your pull request.
+Pull requests (PRs) are welcome. *Please only modify the `.jl` file in your PR*. Unlike the .ipynb file, .jl files are plain text files and play much more nicely with git, making it easier to review your PR.
