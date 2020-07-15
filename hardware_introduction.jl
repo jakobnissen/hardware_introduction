@@ -91,7 +91,7 @@ function test_file(path)
         read(file, UInt8)
     end
 end
-@time test_file("test_file")
+@time test_file("/Users/jakobnissen/Downloads/test.jgi.abundance.dat")
 
 ## Randomly access data N times
 function random_access(data::Vector{UInt}, N::Integer)
@@ -114,7 +114,7 @@ data = rand(UInt, 2^24)
 # [CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]
 # </font></center><br>
 # 
-# On my computer, finding a single byte in a file (including opening and closing the file) takes about 13 miliseconds, and accessing 1,000,000 integers from memory takes 131 miliseconds. So RAM is on the order of 10,000 times faster than disk.
+# On my computer, finding a single byte in a file (including opening and closing the file) takes about 781 µs, and accessing 1,000,000 integers from memory takes 95 miliseconds. So RAM is on the order of 8,000 times faster than disk.
 # 
 # When working with data too large to fit into RAM, load in the data chunk by chunk, e.g. one line at a time, and operate on that. That way, you don't need *random access* to your file and thus need to waste time on extra seeks, but only sequential access. And you *must* strive to write your program such that any input files are only read through *once*, not multiple times.
 # 
@@ -360,20 +360,27 @@ function increment!(x::Vector{<:Integer})
     return x
 end
 
+function print_mean(trial)
+    println("Mean time: ", BenchmarkTools.prettytime(BenchmarkTools.mean(trial).time))
+end
+
 data = rand(UInt, 2^10);
 #----------------------------------------------------------------------------
 
-@btime increment(data);
-@btime increment!(data);
+## Run once to compile the function - we don't want to measure compilation
+increment(data); increment!(data)
+
+print_mean(@benchmark increment(data));
+print_mean(@benchmark increment!(data));
 #----------------------------------------------------------------------------
 
-# On my computer, the allocating function is about 5x slower. This is due to a few properties of the code:
+# On my computer, the allocating function is more than 20x slower on average. This is due to a few properties of the code:
 # * First, the allocation itself takes time
 # * Second, the allocated objects eventually have to be deallocated, also taking time
 # * Third, repeated allocations triggers the GC to run, causing overhead
 # * Fourth, more allocations sometimes means less efficient cache use because you are using more memory
 # 
-# For these reasons, performant code should keep allocations to a minimum. Note that the `@btime` macro prints the number and size of the allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will be interested in reducing allocations.
+# Note that I used the mean time instead of the median, since for this function the GC only triggers approximately every 30'th call, but it consumes 30-40 µs when it does. All this means performant code should keep allocations to a minimum. Note that the `@btime` macro prints the number and size of the allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will be interested in reducing allocations.
 # 
 # ### Not all objects need to be allocated
 # Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a simple data structure with a beginning and end, similar to a `Vector` in Julia. The stack can only be modified by adding or subtracting elements from the end, analogous to a `Vector` with only the two mutating operations `push!` and `pop!`. These operations on the stack are very fast. When we talk about "allocations", however, we talk about data on the heap. Unlike the stack, the heap has an unlimited size (well, it has the size of your computer's RAM), and can be modified arbitrarily, deleting any objects.
@@ -389,10 +396,10 @@ data = rand(UInt, 2^10);
 # * The object should have a fixed size known at compile time.
 # * The compiler must know that object never changes. The CPU is free to copy stack-allocated objects, and for immutable objects, there is no way to distinguish a copy from the original. This bears repeating: *With immutable objects, there is no way to distinguish a copy from the original*. This gives the compiler and the CPU certain freedoms when operating on it.
 # 
-# In Julia, we have a concept of a *bitstype*, which is an object that recursively contain no heap-allocated objects. Heap allocated objects are objects of types `String`, `Array`, `Ref` and `Symbol`, mutable objects, or objects containing any of the previous. Bitstypes are more performant exactly because they are immutable, fixed in size and can be stack allocated. The latter point is also why objects are immutable by default in Julia, and leads to one other performance tip: Use immutable objects whereever possible.
+# In Julia, we have a concept of a *bitstype*, which is an object that recursively contain no heap-allocated objects. Heap allocated objects are objects of types `String`, `Array`, `Symbol`, mutable objects, or objects containing any of the previous. Bitstypes are more performant exactly because they are immutable, fixed in size and can almost always be stack allocated. The latter point is also why objects are immutable by default in Julia, and leads to one other performance tip: Use immutable objects whereever possible.
 # 
 # What does this mean in practise? In Julia, it means if you want fast stack-allocated objects:
-# * You object must be created, used and destroyed in a fully compiled function so the compiler knows for certain when it needs to create, use and destroy the object. If the object is returned for later use (and not immediately returned to another, fully compiled function), we say that the object *escapes*, and must be allocated.
+# * Your object must be created, used and destroyed in a fully compiled function so the compiler knows for certain when it needs to create, use and destroy the object. If the object is returned for later use (and not immediately returned to another, fully compiled function), we say that the object *escapes*, and must be allocated.
 # * Your object's type must be a bitstype.
 # * Your type must be limited in size. I don't know exactly how large it has to be, but 100 bytes is fine.
 # * The exact memory layout of your type must be known by the compiler.
@@ -432,12 +439,12 @@ data_heap = [HeapAllocated(i.x) for i in data_stack]
 
 # We can verify that, indeed, the array in the `data_stack` stores the actual data of a `StackAllocated` object, whereas the `data_heap` contains pointers (i.e. memory addresses):
 
-println("First object of data_stack: ", data_stack[1])
-println("First data in data_stack array: ", unsafe_load(pointer(data_stack)), '\n')
+println("First object of data_stack:         ", data_stack[1])
+println("First data in data_stack array:     ", unsafe_load(pointer(data_stack)), '\n')
 
-println("First object of data_heap: ", data_heap[1])
+println("First object of data_heap:          ", data_heap[1])
 first_data = unsafe_load(Ptr{UInt}(pointer(data_heap)))
-println("First data in data_heap array: ", repr(first_data))
+println("First data in data_heap array:      ", repr(first_data))
 println("Data at address ", repr(first_data), ": ",
         unsafe_load(Ptr{HeapAllocated}(first_data)))
 #----------------------------------------------------------------------------
@@ -529,7 +536,7 @@ data = rand(UInt64, 4096);
 # 
 # $$(((((((A + B) + C) + D) + E) + F) + G) + H)$$
 # 
-# Whereas when loading the integers using SIMD, four 64-bit integers would be loaded into one vector `<A, B, C, D>`, and the other four into another `<E, F, G, H>`. The two vectors would be added: `<A+E, B+F, C+G, D+H>`. After the loop, the four integers in the resulting vector would be added. So other overall order would be:
+# Whereas when loading the integers using SIMD, four 64-bit integers would be loaded into one vector `<A, B, C, D>`, and the other four into another `<E, F, G, H>`. The two vectors would be added: `<A+E, B+F, C+G, D+H>`. After the loop, the four integers in the resulting vector would be added. So the overall order would be:
 # 
 # $$((((A + E) + (B + F)) + (C + G)) + (D + H))$$
 # 
@@ -657,7 +664,7 @@ f() = error()
 @code_native f()
 #----------------------------------------------------------------------------
 
-# This code contains the `callq` instruction, which calls another function. A function call comes with some overhead depending on the arguments of the function and other things. While the time spent on a function call is measured in microseconds, it can add up if the function called is in a tight loop.
+# This code contains the `callq` instruction, which calls another function. A function call comes with some overhead depending on the arguments of the function and other things. While the time spent on a function call is measured in nanoseconds, it can add up if the function called is in a tight loop.
 # 
 # However, if we show the assembly of this function:
 
@@ -796,7 +803,7 @@ src_all_odd = [2i+1 for i in src_random];
 
 # In the first case, the integers are random, and about half the branches will be mispredicted causing delays. In the second case, the branch is always taken, the branch predictor is quickly able to pick up the pattern and will reach near 100% correct prediction. As a result, on my computer, the latter is around 6x faster.
 # 
-# Note that if you use smaller vectors and repeat the computation many times, as the `@btime` macro does, the branch predictor is able to learn the pattern of the small random vectors by heart, and will reach much better than random prediction. This is especially pronounced in the most modern CPUs where the branch predictors have gotten much better. This "learning by heart" is an artifact of the loop in the benchmarking process. You would not expect to run the exact same computation repeatedly on real-life data:
+# Note that if you use smaller vectors and repeat the computation many times, as the `@btime` macro does, the branch predictor is able to learn the pattern of the small random vectors by heart, and will reach much better than random prediction. This is especially pronounced in the most modern CPUs (and in particular the CPUs sold by AMD, I hear) where the branch predictors have gotten much better. This "learning by heart" is an artifact of the loop in the benchmarking process. You would not expect to run the exact same computation repeatedly on real-life data:
 
 src_random = rand(UInt, 100)
 src_all_odd = [2i+1 for i in src_random];
@@ -847,11 +854,11 @@ src_all_odd = [2i+1 for i in src_random];
 # ## Multithreading<a id='multithreading'></a>
 # In the bad old days, CPU clock speed would increase every year as new processors were brought onto the market. Partially because of heat generation, this acceleration slowed down once CPUs hit the 3 GHz mark. Now we see only minor clock speed increments every processor generation. Instead of raw speed of execution, the focus has shifted on getting more computation done per clock cycle. CPU caches, CPU pipelining, branch prediction and SIMD instructions are all important progresses in this area, and have all been covered here.
 # 
-# Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel. Furthermore, many CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors. For example, I am writing this on a laptop with an Intel Core i5-8259U CPU. This CPU has 4 cores, but various operating systems like Windows or Linux would show 8 "CPUs" in the systems monitor program.
+# Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel. Furthermore, many CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors. For example, I am writing this on a laptop with an Intel Core i9-9880H CPU. This CPU has 8 cores, but various operating systems like Windows or Linux would show 16 "CPUs" in the systems monitor program.
 # 
 # Hyperthreading only really matters when your threads are sometimes prevented from doing work. Besides CPU-internal causes like cache misses, a thread can also be paused because it is waiting for an external resource like a webserver or data from a disk. If you are writing a program where some threads spend a significant time idling, the core can be used by the other thread, and hyperthreading can show its value.
 # 
-# Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. You can set the environment variable `JULIA_NUM_THREADS` before starting Julia. I have 4 cores on this CPU, both with hyperthreading so I have set the number of threads to 8:
+# Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. You can set the environment variable `JULIA_NUM_THREADS` before starting Julia. I have 8 cores on this CPU, all with hyperthreading so I have set the number of threads to 16:
 
 Threads.nthreads()
 #----------------------------------------------------------------------------
@@ -880,14 +887,14 @@ end
 parallel_sleep(1); ## run once to compile it
 #----------------------------------------------------------------------------
 
-for njobs in (1, 4, 8, 16)
+for njobs in (1, 4, 8, 16, 32)
     @time parallel_sleep(njobs);
 end
 #----------------------------------------------------------------------------
 
-# You can see that with this task, my computer can run 8 jobs in parallel almost as fast as it can run 1. But 16 jobs takes much longer.
+# You can see that with this task, my computer can run 16 jobs in parallel almost as fast as it can run 1. But 32 jobs takes much longer.
 # 
-# For CPU-constrained programs, the core is kept busy with only one thread, and there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Most workloads are not that optimized and can really benefit from hyperthreading, so we'll stick with 8 threads for now.
+# For CPU-constrained programs, the core is kept busy with only one thread, and there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Most workloads are not that optimized and can really benefit from hyperthreading, so we'll stick with 16 threads for now.
 # 
 # #### Parallelizability
 # Multithreading is more difficult that any of the other optimizations, and should be one of the last tools a programmer reaches for. However, it is also an impactful optimization. Compute clusters usually contain CPUs with tens of CPU cores, offering a massive potential speed boost ripe for picking.
@@ -923,7 +930,7 @@ end
 
 "Create a Julia fractal image"
 function julia()
-    M = Matrix{UInt8}(undef, 10000, 5000)
+    M = Matrix{UInt8}(undef, 20000, 5000)
     for (x, real) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 2)))
         fill_column!(M, x, real)
     end
@@ -934,7 +941,7 @@ end;
 @time M = julia();
 #----------------------------------------------------------------------------
 
-# That took around 5 seconds on my computer. Now for a parallel one:
+# That took around 10 seconds on my computer. Now for a parallel one:
 
 function recursive_fill_columns!(M::Matrix, cols::UnitRange)
     F, L = first(cols), last(cols)
@@ -952,7 +959,7 @@ function recursive_fill_columns!(M::Matrix, cols::UnitRange)
 end
 
 function julia()
-    M = Matrix{UInt8}(undef, 10000, 5000)
+    M = Matrix{UInt8}(undef, 20000, 5000)
     recursive_fill_columns!(M, 1:size(M, 2))
     return M
 end;
@@ -961,7 +968,7 @@ end;
 @time M = julia();
 #----------------------------------------------------------------------------
 
-# This is almost 6 times as fast! This is close to the best case scenario for 8 threads, only possible for near-perfect embarrasingly parallel tasks.
+# This is almost exactly 16 times as fast! With 16 threads, this is close to the best case scenario, only possible for near-perfect embarrasingly parallel tasks.
 # 
 # Despite the potential for great gains, in my opinion, multithreading should be one of the last resorts for performance improvements, for three reasons:
 # 
