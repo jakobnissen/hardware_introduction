@@ -91,7 +91,7 @@ function test_file(path)
         read(file, UInt8)
     end
 end
-@time test_file("/Users/jakobnissen/Downloads/test.jgi.abundance.dat")
+@time test_file("README.md")
 
 ## Randomly access data N times
 function random_access(data::Vector{UInt}, N::Integer)
@@ -107,7 +107,7 @@ data = rand(UInt, 2^24)
 @time random_access(data, 1000000);
 #----------------------------------------------------------------------------
 
-# Benchmarking this is a little tricky, because the *first* invokation will include the compilation times of both functions. And in the *second* invokation, your operating system will have stored a copy of the file (or *cached* the file) in RAM, making the file seek almost instant. To time it properly, run it once, then *change the file*, and run it again. So in fact, we should update our computer diagram:
+# Benchmarking this is a little tricky, because the *first* invokation will include the compilation times of both functions. And in the *second* invokation, your operating system will have stored a copy of the file (or *cached* the file) in RAM, making the file seek almost instant. To time it properly, run it once, then *change the file* to another not-recently-opened file, and run it again. So in fact, we should update our computer diagram:
 # 
 # <br>
 # <center><font size=4>
