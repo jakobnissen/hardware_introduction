@@ -140,12 +140,10 @@ end;
 # ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
 let
 	data = rand(UInt, 2^24)
-	time1 = @elapsed test_file("./hardware_introduction.jl")
-	time2 = @elapsed random_access(data, 1000000);
-	md"
-* Random access to file: $time1 seconds
-* 1 million random access to RAM: $time2 seconds
-	"
+	with_terminal() do
+		@time test_file("./hardware_introduction.ipynb")
+		@time random_access(data, 1000000);
+	end
 end
 
 # ╔═╡ cdde6fe8-8aef-11eb-0a3c-77e28f7a2c09
@@ -186,16 +184,10 @@ To illustrate this, let's compare the performance of the `random_access` functio
 Notice the large discrepency in time spent - a difference of around 70x.
 """
 
-# ╔═╡ d2344578-8c10-11eb-2004-7fec261bb616
-let
-	data1 = rand(UInt, 1024)
-	data2 = rand(UInt, 2^24)
-	time1 = mean_time(@benchmark random_access($data1, 2^20) seconds=1)
-	time2 = mean_time(@benchmark random_access($data2, 2^20) seconds=1)
-	md"
-* Short vector: $time1
-* Long vector: $time2
-	"
+# ╔═╡ b73605ca-8ee4-11eb-1a0d-bb6678de91c6
+with_terminal() do
+	@btime random_access($(rand(UInt, 1024)), 2^20) seconds=1
+	@btime random_access($(rand(UInt, 2^24)), 2^20) seconds=1
 end
 
 # ╔═╡ c6da4248-8c19-11eb-1c16-093695add9a9
@@ -213,22 +205,18 @@ function linear_access(data::Vector{UInt}, N::Integer)
         n = (n >>> 7) ⊻ data[(15 * i) & mask + 1]
     end
     return n
-end
+end;
 
 # ╔═╡ d4c67b82-8c1a-11eb-302f-b79c86412ce5
 md"""
 `linear_access` do nearly the same computation as `random_access`, but accesses every 15th element. An `UInt` in Julia is 8 bytes (64 bits), so a step size of 15 means there are $15 * 64 = 960$ bits between each element; larger than the 64 byte cache line. That means *every single* access will cause a cache miss - in contrast to `random_access` with a large vector, where only *most* accesses forces cache misses.
 """
 
-# ╔═╡ f8ce37a0-8c19-11eb-3703-798a8e01c24a
-let
-	data2 = rand(UInt, 2^24)
-	randtime = mean_time(@benchmark random_access($data2, 2^20))
-	lintime = mean_time(@benchmark linear_access($data2, 2^20))
-	md"
-* Random access: $randtime
-* Linear access (every 15th element): $lintime
-"
+# ╔═╡ e71e4798-8ee4-11eb-3ea2-fdbbcdcf7410
+with_terminal() do
+	data = rand(UInt, 2^24)
+	@btime random_access($data, 2^20) seconds=1
+	@btime linear_access($data, 2^20) seconds=1
 end
 
 # ╔═╡ 0f2ac53c-8c1b-11eb-3841-27f4ea1e9617
@@ -278,24 +266,22 @@ function alignment_test(data::Vector{UInt}, offset::Integer)
     return n
 end;
 
-# ╔═╡ 1ea62e0e-8af0-11eb-3585-3d747b8b7fab
-let
-	data = rand(UInt, 256 + 8);
-	cache_aligned = mean_time(@benchmark alignment_test($data, 0))
-	cache_straddle = mean_time(@benchmark alignment_test($data, 60))
-	md"
-* Cache aligned: $cache_aligned
-* Cache straddle: $cache_straddle
-	"
+# ╔═╡ 1f38f8c6-8ee5-11eb-1c01-f3706534a9cf
+with_terminal() do
+	data = rand(UInt, 256 + 8)
+	@btime alignment_test($data, 0) seconds=1
+	@btime alignment_test($data, 60) seconds=1
 end
 
 # ╔═╡ 3a1efd5a-8af0-11eb-21a2-d1011f16555c
-md"Fortunately, the compiler does a few tricks to make it less likely that you will access misaligned data. First, Julia (and other compiled languages) always places new objects in memory at the boundaries of cache lines. When an object is placed right at the boundary, we say that it is *aligned*. Julia also aligns the beginning of larger arrays:"
+md"The consequences of unaligned memory access is very CPU-dependent. On my current CPU, I see a ~15% performance decrease. On my old computer where I originally wrote this notebook, the penalty was around 100%. Old processors can do [even worse things](https://www.kernel.org/doc/Documentation/unaligned-memory-access.txt) - incredibly, the CPU inside the Game Boy Advance from 2001 would _silently perform a different read!_ 😱
+
+Fortunately, the compiler does a few tricks to make it less likely that you will access misaligned data. First, Julia (and other compiled languages) always places new objects in memory at the boundaries of cache lines. When an object is placed right at the boundary, we say that it is *aligned*. Julia also aligns the beginning of larger arrays:"
 
 # ╔═╡ 3fae31a0-8af0-11eb-1ea8-7980e7875039
 let
-	memory_address = reinterpret(UInt, pointer(rand(128)))
-	@assert iszero(memory_address % 64)
+	memory_address = reinterpret(UInt, pointer(rand(1024)))
+	@assert iszero(memory_address % 64) # should not error!
 end
 
 # ╔═╡ 5b10a2b6-8af0-11eb-3fe7-4b78b4c22550
@@ -313,19 +299,16 @@ end
 # ╔═╡ 624eae74-8af0-11eb-025b-8b68dc55f31e
 md"Then we can use Julia's introspection to get the relative position of each of the three integers in an `AlignmentTest` object in memory:"
 
-# ╔═╡ bf53112a-8e81-11eb-3f7d-17b3f5a7d594
-(
-	"Size of AlignmentTest: $(sizeof(AlignmentTest)) bytes" *
-	let
-		fieldinfo = []
-		for fieldno in 1:fieldcount(AlignmentTest)
-			push!(fieldinfo, "\n * Name: $(fieldname(AlignmentTest, fieldno))")
-			fieldinfo[end] *= "\tSize: $(sizeof(fieldtype(AlignmentTest, fieldno))) bytes"
-			fieldinfo[end] *= "\tOffset: $(fieldoffset(AlignmentTest, fieldno)) bytes."
-		end
-		join(fieldinfo)
-	end 
-) |> Markdown.parse
+# ╔═╡ d4c8c38c-8ee6-11eb-0b49-33fbfbd214f3
+with_terminal() do
+	T = AlignmentTest
+	println("Size of $T: ", sizeof(T), "bytes")
+	for fieldno in 1:fieldcount(T)
+		print("Name: ", fieldname(T, fieldno), '\t')
+		print("Size: ", sizeof(fieldtype(T, fieldno)), '\t')
+		print("Offset: ", fieldoffset(T, fieldno), '\n')
+	end
+end
 
 # ╔═╡ 7b979410-8af0-11eb-299c-af0a5d740c24
 md"""
@@ -357,6 +340,9 @@ function foo(x)
     return s
 end;
 
+# ╔═╡ a74a9966-8af0-11eb-350f-6787d2759eba
+with_terminal(() -> @code_native foo([UInt(1)]))
+
 # ╔═╡ ae9ee028-8af0-11eb-10c0-6f2db3ab8025
 md"""
 Let's break it down:
@@ -365,24 +351,24 @@ The lines beginning with `;` are comments, and explain which section of the code
 
 The next two columns in the instruction, `24(%rdi)` and `%rax` are the arguments to `movq`. These are the names of the registers (we will return to registers later) where the data to operate on are stored.
 
-You can also see (in the larger display of assembly code) that the code is segmented into sections beginning with a name starting with "L", for example there's a section `L48`. These sections are jumped between using if-statements, or *branches*. Here, section `L48` marks the actual loop. You can see the following two instructions in the `L48` section:
+You can also see (in the larger display of assembly code) that the code is segmented into sections beginning with a name starting with "L", for example, when I ran it, there's a section `L32`. These sections are jumped between using if-statements, or *branches*. Here, section `L32` marks the actual loop. You can see the following two instructions in the `L32` section:
 
 ```
 ; ││┌ @ promotion.jl:401 within `=='
      cmpq    $1, %rdi
 ; │└└
-     jne     L48
+     jne     L32
 ```
 
-The first instruction `cmpq` (compare quad) compares the data in registry `rdi`, which hold the data for the number of iterations left (plus one), with the number 1, and sets certain flags (wires) in the CPU based on the result. The next instruction `jne` (jump if not equal) makes a jump if the "equal" flag is not set in the CPU, which happens if there is one or more iterations left. You can see it jumps to `L48`, meaning this section repeat.
+The first instruction `cmpq` (compare quad) compares the data in registry `rdi`, which hold the data for the number of iterations left (plus one), with the number 1, and sets certain flags (wires) in the CPU based on the result. The next instruction `jne` (jump if not equal) makes a jump if the "equal" flag is not set in the CPU, which happens if there is one or more iterations left. You can see it jumps to `L32`, meaning this section repeat.
 """
 
 # ╔═╡ b73b5eaa-8af0-11eb-191f-cd15de19bc38
 md"""
-### Fast instruction, slow instruction
+#### Fast instruction, slow instruction
 Not all CPU instructions are equally fast. Below is a table of selected CPU instructions with *very rough* estimates of how many clock cycles they take to execute. You can find much more detailed tables [in this document](https://www.agner.org/optimize/instruction_tables.pdf). Here, I'll summarize the speed of instructions on modern Intel CPUs. It's very similar for all modern CPUs.
 
-You will see that the time is given both as latency, and reciprocal throughput (that is, $1/throughput$. The reason is that CPUs contain multiple circuits for some operations that can operate in parallel. So while float multiplication has a latency of 5 clock cycles, if 10 floating point ops can be computed in parallel in 10 different circuits, it has a throughput of 2 ops/second, and so a reciprocal throughput of 0.5.
+You will see that the time is given both as latency, and reciprocal throughput (that is, $1/throughput$). The reason is that CPUs contain multiple circuits for some operations that can operate in parallel. So while float multiplication has a latency of 5 clock cycles, if 10 floating point ops can be computed in parallel in 10 different circuits, it has a throughput of 2 ops/second, and so a reciprocal throughput of 0.5.
 
 The following table measures time in clock cycles:
 
@@ -435,13 +421,13 @@ md"However, modern compilers are pretty clever, and will often figure out the op
 
 # ╔═╡ d376016a-8af0-11eb-3a15-4322759143d1
 # Calling it with debuginfo=:none removes the comments in the assembly code
-code_native(divide_slow, (UInt,), debuginfo=:none)
+with_terminal(() -> @code_native debuginfo=:none divide_slow(UInt(1)))
 
 # ╔═╡ d70c56bc-8af0-11eb-1220-09e78dba26f7
-md"## Allocations and immutability<a id='allocations'></a>
+md"## Allocations and immutability
 As already mentioned, main RAM is much slower than the CPU cache. However, working in main RAM comes with an additional disadvantage: Your operating system (OS) keeps track of which process have access to which memory. If every process had access to all memory, then it would be trivially easy to make a program that scans your RAM for secret data such as bank passwords - or for one program to accidentally overwrite the memory of another program. Instead, every process is allocated a bunch of memory by the OS, and is only allowed to read or write to the allocated data.
 
-The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Memory that is not kept track of will eventually be overwritten by other data. Allocation and deallocation take a significant amount of time depending on the size of objects, from a few tens to hundreds of nanoseconds per allocation.
+The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Memory that is not kept track of will eventually be overwritten by other data. Allocation and deallocation take a significant amount of time depending on the size of objects, from a few tens of nanoseconds to a few microseconds per allocation.
 
 In programming languages such as Julia, Python, R and Java, deallocation is automatically done using a program called the *garbage collector* (GC). This program keeps track of which objects are rendered unreachable by the programmer, and deallocates them. For example, if you do:"
 
@@ -476,15 +462,14 @@ begin
 		end
 		return x
 	end
-end
+end;
 
-# ╔═╡ fcaa433e-8af0-11eb-3f1d-bdabc6d27d6b
-function print_mean(trial)
-    println("Mean time: ", BenchmarkTools.prettytime(BenchmarkTools.mean(trial).time))
+# ╔═╡ 11c500e8-8ee2-11eb-3291-4382b60c5a2b
+with_terminal() do
+	data = rand(UInt, 2^10)
+	@btime increment($data) seconds=1
+	@btime increment!($data) seconds=1
 end
-
-# ╔═╡ ffb5c6c0-8af0-11eb-229c-4194e31bc3ac
-data_3 = rand(UInt, 2^10);
 
 # ╔═╡ 22512ab2-8af1-11eb-260b-8d6c16762547
 md"""
@@ -494,29 +479,30 @@ On my computer, the allocating function is more than 20x slower on average. This
 * Third, repeated allocations triggers the GC to run, causing overhead
 * Fourth, more allocations sometimes means less efficient cache use because you are using more memory
 
-Note that I used the mean time instead of the median, since for this function the GC only triggers approximately every 30'th call, but it consumes 30-40 µs when it does. All this means performant code should keep allocations to a minimum. Note that the `@btime` macro prints the number and size of the allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will be interested in reducing allocations.
+Note that I used the mean time instead of the median, since for this function the GC only triggers approximately every 30'th call, but it consumes 30-40 µs when it does. All this means performant code should keep allocations to a minimum.
 
-### Not all objects need to be allocated
-Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a simple data structure with a beginning and end, similar to a `Vector` in Julia. The stack can only be modified by adding or subtracting elements from the end, analogous to a `Vector` with only the two mutating operations `push!` and `pop!`. These operations on the stack are very fast. When we talk about "allocations", however, we talk about data on the heap. Unlike the stack, the heap has an unlimited size (well, it has the size of your computer's RAM), and can be modified arbitrarily, deleting any objects.
+The `@btime` macro, and other benchmarking tools, tells you the number of allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will be interested in reducing allocations.
+
+#### Not all objects need to be allocated
+Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a simple data structure with a beginning and end, similar to a `Vector` in Julia. The stack can only be modified by adding or subtracting elements from the end, analogous to a `Vector` with only the two mutating operations `push!` and `pop!`. These operations on the stack are very fast. When we talk about "allocations", however, we talk about data on the heap. Unlike the stack, the heap has an unlimited size (well, it has the size of your computer's RAM), and can be modified arbitrarily, deleting and accessing any objects. You can think of the stack like a `Vector`, and the heap like a `Dict`.
 
 Intuitively, it may seem obvious that all objects need to be placed in RAM, must be able to be retrieved and deleted at any time by the program, and therefore need to be allocated on the heap. And for some languages, like Python, this is true. However, this is not true in Julia and other efficient, compiled languages. Integers, for example, can often be placed on the stack.
 
 Why do some objects need to be heap allocated, while others can be stack allocated? To be stack-allocated, the compiler needs to know for certain that:
 
-* The object is a reasonably small size, so it fits on the stack. This is needed for technical reasons for the stack to operate.
-* The compiler can predict exactly *when* it needs to add and destroy the object so it can destroy it by simply popping the stack (similar to calling `pop!` on a `Vector`). This is usually the case for local variables in compiled languages.
+* The object is a reasonably small size, so it fits on the stack. For technical reasons, the stack can't just be hundreds of megabytes in size.
+* The compiler can predict exactly *when* it needs to create and destroy the object so it can destroy it timely by simply popping the stack (similar to calling `pop!` on a `Vector`). This is usually the case for local variables in compiled languages.
 
 Julia has even more constrains on stack-allocated objects.
 * The object should have a fixed size known at compile time.
-* The compiler must know that object never changes. The CPU is free to copy stack-allocated objects, and for immutable objects, there is no way to distinguish a copy from the original. This bears repeating: *With immutable objects, there is no way to distinguish a copy from the original*. This gives the compiler and the CPU certain freedoms when operating on it.
-
-In Julia, we have a concept of a *bitstype*, which is an object that recursively contain no heap-allocated objects. Heap allocated objects are objects of types `String`, `Array`, `Symbol`, mutable objects, or objects containing any of the previous. Bitstypes are more performant exactly because they are immutable, fixed in size and can almost always be stack allocated. The latter point is also why objects are immutable by default in Julia, and leads to one other performance tip: Use immutable objects whereever possible.
+* The compiler must know that object never changes. The CPU is free to copy stack-allocated objects, and for immutable objects, there is no way to distinguish a copy from the original. This bears repeating: *With immutable objects, there is no way to distinguish a copy from the original*. This gives the compiler and the CPU certain freedoms when operating on it. The latter point is also why objects are immutable by default in Julia, and leads to one other performance tip: Use immutable objects whereever possible.
 
 What does this mean in practise? In Julia, it means if you want fast stack-allocated objects:
 * Your object must be created, used and destroyed in a fully compiled function so the compiler knows for certain when it needs to create, use and destroy the object. If the object is returned for later use (and not immediately returned to another, fully compiled function), we say that the object *escapes*, and must be allocated.
-* Your object's type must be a bitstype.
 * Your type must be limited in size. I don't know exactly how large it has to be, but 100 bytes is fine.
-* The exact memory layout of your type must be known by the compiler.
+* The exact memory layout of your type must be known by the compiler (it nearly always is).
+
+_Note: Earlier versions of this notebook mentioned that stack-allocated types in Julia also must be so-called bitstypes. This restriction was lifted in Julia 1.5_
 """
 
 # ╔═╡ 2a7c1fc6-8af1-11eb-2909-554597aa2949
@@ -536,59 +522,68 @@ end
 md"We can inspect the code needed to instantiate a `HeapAllocated` object with the code needed to instantiate a `StackAllocated` one:"
 
 # ╔═╡ 33350038-8af1-11eb-1ff5-6d42d86491a3
-@code_native HeapAllocated(1)
+with_terminal(() -> @code_native HeapAllocated(1))
 
 # ╔═╡ 3713a8da-8af1-11eb-2cb2-1957455227d0
-md"Notice the `callq` instructions in the `HeapAllocated` one. This instruction calls out to other functions, meaning that in fact, much more code is really needed to create a `HeapAllocated` object that what is displayed. In constrast, the `StackAllocated` really only needs a few instructions:"
+md"Notice the `callq` instruction in the `HeapAllocated` one. This instruction calls out to other functions, meaning that in fact, much more code is really needed to create a `HeapAllocated` object that what is displayed. In constrast, the `StackAllocated` really only needs a few instructions:"
 
 # ╔═╡ 59f58f1c-8af1-11eb-2e88-997e9d4bcc48
-@code_native StackAllocated(1)
+with_terminal(() -> @code_native StackAllocated(1))
 
 # ╔═╡ 5c86e276-8af1-11eb-2b2e-3386e6795f37
 md"
-Because bitstypes dont need to be stored on the heap and can be copied freely, bitstypes are stored *inline* in arrays. This means that bitstype objects can be stored directly inside the array's memory. Non-bitstypes have a unique identity and location on the heap. They are distinguishable from copies, so cannot be freely copied, and so arrays contain reference to the memory location on the heap where they are stored. Accessing such an object from an array then means first accessing the array to get the memory location, and then accessing the object itself using that memory location. Beside the double memory access, objects are stored less efficiently on the heap, meaning that more memory needs to be copied to CPU caches, meaning more cache misses. Hence, even when stored on the heap in an array, bitstypes can be stored more effectively.
+Because immutable objects dont need to be stored on the heap and can be copied freely, immutables are stored *inline* in arrays. This means that immutable objects can be stored directly inside the array's memory. Mutable objects have a unique identity and location on the heap. They are distinguishable from copies, so cannot be freely copied, and so arrays contain reference to the memory location on the heap where they are stored. Accessing such an object from an array then means first accessing the array to get the memory location, and then accessing the object itself using that memory location. Beside the double memory access, objects are stored less efficiently on the heap, meaning that more memory needs to be copied to CPU caches, meaning more cache misses. Hence, even when stored on the heap in an array, immutables can be stored more effectively.
 "
 
 # ╔═╡ 61ee9ace-8af1-11eb-34bd-c5af962c8d82
-begin
+let
 	Base.:+(x::Int, y::AllocatedInteger) = x + y.x
 	Base.:+(x::AllocatedInteger, y::AllocatedInteger) = x.x + y.x
 
 	data_stack = [StackAllocated(i) for i in rand(UInt16, 1000000)]
 	data_heap = [HeapAllocated(i.x) for i in data_stack]
-
-	@btime sum(data_stack)
-	@btime sum(data_heap);
+	
+	with_terminal() do
+		@btime sum($data_stack) seconds=1
+		@btime sum($data_heap) seconds=1
+	end
 end
 
 # ╔═╡ 6849d9ec-8af1-11eb-06d6-db49af4796bc
 md"We can verify that, indeed, the array in the `data_stack` stores the actual data of a `StackAllocated` object, whereas the `data_heap` contains pointers (i.e. memory addresses):"
 
 # ╔═╡ 6ba266f4-8af1-11eb-10a3-3daf6e473142
-begin
-	println("First object of data_stack:         ", data_stack[1])
-	println("First data in data_stack array:     ", unsafe_load(pointer(data_stack)), '\n')
-
-	println("First object of data_heap:          ", data_heap[1])
+with_terminal() do
+	data_stack = [StackAllocated(i) for i in rand(UInt16, 1)]
+	data_heap = [HeapAllocated(i.x) for i in data_stack]
+	
+	println(rpad("First object of data_stack:", 36), data_stack[1])
+	println(
+		rpad("First data in data_stack array:", 36),
+		unsafe_load(pointer(data_stack)),
+		'\n'
+	)
+	
+	println(rpad("First object of data_heap:", 36), data_heap[1])
 	first_data = unsafe_load(Ptr{UInt}(pointer(data_heap)))
-	println("First data in data_heap array:      ", repr(first_data))
-	println("Data at address ", repr(first_data), ": ",
-			unsafe_load(Ptr{HeapAllocated}(first_data)))
+	println(rpad("First data in data_heap array:", 36), repr(first_data))
+	println(
+		"Data at address ",
+		repr(first_data), ": ",
+		unsafe_load(Ptr{HeapAllocated}(first_data))
+	)
 end
 
 # ╔═╡ 74a3ddb4-8af1-11eb-186e-4d80402adfcf
-md"## Registers and SIMD<a id='simd'></a>
+md"## Registers and SIMD
 It is time yet again to update our simplified computer schematic. A CPU operates only on data present in *registers*. These are small, fixed size slots (e.g. 8 bytes in size) inside the CPU itself. A register is meant to hold one single piece of data, like an integer or a floating point number. As hinted in the section on assembly code, each instruction usually refers to one or two registers which contain the data the operation works on:
 
-<br>
-<center><font size=4>
-[CPU] ↔ [REGISTERS] ↔ [CPU CACHE] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]
-</font></center><br>
+$$[CPU] ↔ [REGISTERS] ↔ [CACHE] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
 To operate on data structures larger than one register, the data must be broken up into smaller pieces that fits inside the register. For example, when adding two 128-bit integers on my computer:"
 
 # ╔═╡ 7a88c4ba-8af1-11eb-242c-a1813a9e6741
-@code_native UInt128(5) + UInt128(11)
+with_terminal(() -> @code_native UInt128(5) + UInt128(11))
 
 # ╔═╡ 7d3fcbd6-8af1-11eb-0441-2f88a9d59966
 md"""There is no register that can do 128-bit additions. First the lower 64 bits must be added using a `addq` instruction, fitting in a register. Then the upper bits are added with a `adcxq` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
@@ -598,27 +593,25 @@ The small size of the registers serves as a bottleneck for CPU throughput: It ca
 We can illustrate this with the following example:"""
 
 # ╔═╡ 84c0d56a-8af1-11eb-30f3-d137b377c31f
-begin
+with_terminal() do
 	# Create a single statically-sized vector of 8 32-bit integers
 	# I could also have created 4 64-bit ones, etc.
 	a = @SVector Int32[1,2,3,4,5,6,7,8]
-
-	# Don't add comments to output
-	code_native(+, (typeof(a), typeof(a)), debuginfo=:none)
+	@code_native debuginfo=:none a + a
 end
 
 # ╔═╡ 8c2ed15a-8af1-11eb-2e96-1df34510e773
 md"""
-Here, two 8\*32 bit vectors are added together in one single instruction. You can see the CPU makes use of a single `vpaddd` (vector packed add double) instruction to add 8 32-bit integers, as well as the corresponding move instruction `vmovdqu`. Note that vector CPU instructions begin with `v`.
+Here, two 8×32 bit vectors are added together in one single instruction. You can see the CPU makes use of a single `vpaddd` (vector packed add double) instruction to add 8 32-bit integers, as well as the corresponding move instruction `vmovdqu`. Note that vector CPU instructions begin with `v`.
 
 It's worth mentioning the interaction between SIMD and alignment: If a series of 256-bit (32-byte) SIMD loads are misaligned, then up to half the loads could cross cache line boundaries, as opposed to just 1/8th of 8-byte loads. Thus, alignment is a much more serious issue when using SIMD. Since array beginnings are always aligned, this is usually not an issue, but in cases where you are not guaranteed to start from an aligned starting point, such as with matrix operations, this may make a significant difference. In brand new CPUs with 512-bit registers, the issues is even worse as the SIMD size is the same as the cache line size, so *all* loads would be misaligned if the initial load is.
 
 SIMD vectorization of e.g. 64-bit integers may increase throughput by almost 4x, so it is of huge importance in high-performance programming. Compilers will automatically vectorize operations if they can. What can prevent this automatic vectorization?
 
-### SIMD needs uninterrupted iteration of fixed length
+#### SIMD needs uninterrupted iteration of fixed length
 Because vectorized operations operates on multiple data at once, it is not possible to interrupt the loop at an arbitrary point. For example, if 4 64-bit integers are processed in one clock cycle, it is not possible to stop a SIMD loop after 3 integers have been processed. Suppose you had a loop like this:
 
-```
+```julia
 for i in 1:8
     if foo()
         break
@@ -629,17 +622,45 @@ end
 
 Here, the loop could end on any iteration due to the break statement. Therefore, any SIMD instruction which loaded in multiple integers could operate on data *after* the loop is supposed to break, i.e. data which is never supposed to be read. This would be wrong behaviour, and so, the compiler cannot use SIMD instructions.
 
-A good rule of thumb is that simd needs:
+A good rule of thumb is that SIMD needs:
 * A loop with a predetermined length, so it knows when to stop, and
 * A loop with no branches (i.e. if-statements) in the loop
 
 In fact, even boundschecking, i.e. checking that you are not indexing outside the bounds of a vector, causes a branch. After all, if the code is supposed to raise a bounds error after 3 iterations, even a single SIMD operation would be wrong! To achieve SIMD vectorization then, all boundschecks must be disabled. We can use this do demonstrate the impact of SIMD:"""
 
+# ╔═╡ 94182f88-8af1-11eb-207a-37083c1ead68
+begin
+	function sum_boundscheck(x::Vector)
+		n = zero(eltype(x))
+		for i in eachindex(x)
+			n += x[i]
+		end
+		return n
+	end
+
+	function sum_inbounds(x::Vector)
+		n = zero(eltype(x))
+		# By removing the boundscheck, we allow automatic SIMD
+		@inbounds for i in eachindex(x)
+			n += x[i]
+		end
+		return n
+	end
+end;
+
+# ╔═╡ a0286cdc-8af1-11eb-050e-072acdd4f0a0
+with_terminal() do
+	# Make sure the vector is small so we don't time cache misses
+	data = rand(UInt64, 4096)
+	@btime sum_boundscheck($data) seconds=1
+	@btime sum_inbounds($data) seconds=1
+end
+
 # ╔═╡ aa3931fc-8af1-11eb-2f42-f582b8e639ad
 md"""
 On my computer, the SIMD code is 10x faster than the non-SIMD code. SIMD alone accounts for only about 4x improvements (since we moved from 64-bits per iteration to 256 bits per iteration). The rest of the gain comes from not spending time checking the bounds and from automatic loop unrolling (explained later), which is also made possible by the `@inbounds` annotation.
 
-### SIMD needs a loop where loop order doesn't matter
+#### SIMD needs a loop where loop order doesn't matter
 SIMD can change the order in which elements in an array is processed. If the result of any iteration depends on any previous iteration such that the elements can't be re-ordered, the compiler will usually not SIMD-vectorize. Often when a loop won't auto-vectorize, it's due to subtleties in which data moves around in registers means that there will be some hidden memory dependency between elements in an array.
 
 Imagine we want to sum some 64-bit integers in an array using SIMD. For simplicity, let's say the array has 8 elements, `A`, `B`, `C` ... `H`. In an ordinary non-SIMD loop, the additions would be done like so:
@@ -662,8 +683,32 @@ end
 # ╔═╡ c80e05ba-8af1-11eb-20fc-235b45f2eb4b
 md"for this reason, float addition will not auto-vectorize:"
 
+# ╔═╡ cc99d9ce-8af1-11eb-12ec-fbd6df3becc8
+with_terminal() do
+	data = rand(Float64, 4096)
+	@btime sum_boundscheck($data) seconds=1
+	@btime sum_inbounds($data) seconds=1
+end
+
 # ╔═╡ e3931226-8af1-11eb-0da5-fb3c1c22d12e
 md"However, high-performance programming languages usually provide a command to tell the compiler it's alright to re-order the loop, even for non-associative loops. In Julia, this command is the `@simd` macro:"
+
+# ╔═╡ e793e300-8af1-11eb-2c89-e7bc1be249f0
+function sum_simd(x::Vector)
+    n = zero(eltype(x))
+    # Here we add the `@simd` macro to allow SIMD of floats
+    @inbounds @simd for i in eachindex(x)
+        n += x[i]
+    end
+    return n
+end;
+
+# ╔═╡ e8d2ec8e-8af1-11eb-2018-1fa4df5b47ad
+with_terminal() do
+	data = rand(Float64, 4096)
+	@btime sum_inbounds($data) seconds=1
+	@btime sum_simd($data) seconds=1
+end
 
 # ╔═╡ f0a4cb58-8af1-11eb-054c-03192285b5e2
 md"""
@@ -672,7 +717,7 @@ Julia also provides the macro `@simd ivdep` which further tells the compiler tha
 
 # ╔═╡ f5c28c92-8af1-11eb-318f-5fa059d8fd80
 md"""
-## Struct of arrays<a id='soa'></a>
+## Struct of arrays
 If we create an array containing four `AlignmentTest` objects `A`, `B`, `C` and `D`, the objects will lie end to end in the array, like this:
 
     Objects: |      A        |       B       |       C       |        D      |
@@ -704,23 +749,30 @@ With the following memory layout for each field:
 Alignment is no longer a problem, no space is wasted on padding. When running through all the `a` fields, all cache lines contain full 64 bytes of relevant data, so SIMD operations do not need extra operations to pick out the relevant data:
 """
 
-# ╔═╡ 054d848a-8af2-11eb-1f98-67f5d0b9f4ec
-begin
-	Base.rand(::Type{AlignmentTest}) = AlignmentTest(rand(UInt32), rand(UInt16), rand(UInt8))
+# ╔═╡ 72fbb3ec-8ee8-11eb-3836-11092ef74e86
+function Base.rand(::Type{AlignmentTest})
+	AlignmentTest(rand(UInt32), rand(UInt16), rand(UInt8))
+end;
 
+# ╔═╡ 054d848a-8af2-11eb-1f98-67f5d0b9f4ec
+with_terminal() do
 	N  = 1_000_000
 	array_of_structs = [rand(AlignmentTest) for i in 1:N]
-	struct_of_arrays = AlignmentTestVector(rand(UInt32, N), rand(UInt16, N), rand(UInt8, N));
+	struct_of_arrays = AlignmentTestVector(
+		rand(UInt32, N),
+		rand(UInt16, N),
+		rand(UInt8, N)
+	)
 
-	@btime sum(x -> x.a, array_of_structs)
-	@btime sum(struct_of_arrays.a);
+	@btime sum(x -> x.a, $array_of_structs) seconds=1
+	@btime sum($struct_of_arrays.a) seconds=1
 end
 
 # ╔═╡ 0dfc5054-8af2-11eb-098d-35f4e69ae544
 md"""
-## Specialized CPU instructions<a id='instructions'></a>
+## Specialized CPU instructions
 
-Most code makes use of only a score of CPU instructions like move, add, multiply, bitshift, and, or, xor, jumps, and so on. However, CPUs in the typical modern laptop support a *lot* of CPU instructions. Typically, if a certain operation is used heavily in consumer laptops, CPU manufacturers will add specialized instructions to speed up these operations. Depending on the hardware implementation of the instructions, the speed gain from using these instructions can be significant.
+Most code makes use of only a score of simple CPU instructions like move, add, multiply, bitshift, and, or, xor, jumps, and so on. However, CPUs in the typical modern laptop support a *lot* of CPU instructions. Usually, if an operation is used heavily in consumer laptops, CPU manufacturers will add specialized instructions to speed up these operations. Depending on the hardware implementation of the instructions, the speed gain from using these instructions can be significant.
 
 Julia only exposes a few specialized instructions, including:
 
@@ -739,27 +791,21 @@ function manual_count_ones(x)
         x >>>= 1
     end
     return n
-end
+end;
 
-# ╔═╡ a74a9966-8af0-11eb-350f-6787d2759eba
-# Actually running the function will immediately crash Julia, so don't.
-@code_native foo(data)
-
-# ╔═╡ 13f4030e-8af1-11eb-2c9f-2527fbcbbe32
-begin
-	# Run once to compile the function - we don't want to measure compilation
-	increment(data); increment!(data)
-
-	print_mean(@benchmark increment(data));
-	print_mean(@benchmark increment!(data));
+# ╔═╡ 14e46866-8af2-11eb-0894-bba824f266f0
+with_terminal() do
+	data = rand(UInt, 10000)
+	@btime sum(manual_count_ones, $data) seconds=1
+	@btime sum(count_ones, $data) seconds=1
 end
 
 # ╔═╡ 1e7edfdc-8af2-11eb-1429-4d4220bad0f0
 md"""
 The timings you observe here will depend on whether your compiler is clever enough to realize that the computation in the first function can be expressed as a `popcnt` instruction, and thus will be compiled to that. On my computer, the compiler is not able to make that inference, and the second function achieves the same result more than 100x faster.
 
-### Call any CPU instruction
-Julia makes it possible to call CPU instructions direcly. This is not generally advised, since not all your users will have access to the same CPU with the same instructions.
+#### Call any CPU instruction
+Julia makes it possible to call CPU instructions direcly. This is not generally advised, since not all your users will have access to the same CPU with the same instructions, and so your code will crash on users working on computers of different brands.
 
 The latest CPUs contain specialized instructions for AES encryption and SHA256 hashing. If you wish to call these instructions, you can call Julia's backend compiler, LLVM, directly. In the example below, I create a function which calls the `vaesenc` (one round of AES encryption) instruction directly:
 """
@@ -770,28 +816,27 @@ begin
 	const __m128i = NTuple{2, VecElement{Int64}}
 
 	# Define the function in terms of LLVM instructions
-	aesenc(a, roundkey) = ccall("llvm.x86.aesni.aesenc", llvmcall, __m128i, (__m128i, __m128i), a, roundkey);
-end
+	aesenc(a, roundkey) = ccall(
+		"llvm.x86.aesni.aesenc", llvmcall, __m128i,
+		(__m128i, __m128i), a, roundkey
+	)
+end;
 
 # ╔═╡ 2dc4f936-8af2-11eb-1117-9bc10e619ec6
 md"We can verify it works by checking the assembly of the function, which should contain only a single `vaesenc` instruction, as well as the `retq` (return) and the `nopw` (do nothing, used as a filler to align the CPU instructions in memory) instruction:"
 
 # ╔═╡ 76a4e83c-8af2-11eb-16d7-75eaabcb21b6
-@code_native aesenc(__m128i((213132, 13131)), __m128i((31231, 43213)))
+with_terminal(() -> @code_native aesenc(__m128i((1, 1)), __m128i((1, 1))))
 
 # ╔═╡ 797264de-8af2-11eb-0cb0-adf3fbc95c90
 md"""Algorithms which makes use of specialized instructions can be extremely fast. [In a blog post](https://mollyrocket.com/meowhash), the video game company Molly Rocket unveiled a new non-cryptographic hash function using AES instructions which reached unprecedented speeds."""
 
 # ╔═╡ 80179748-8af2-11eb-0910-2b825104159d
-md"## Inlining<a id='inlining'></a>
+md"## Inlining
 Consider the assembly of this function:"
 
-# ╔═╡ 84e49eec-8af2-11eb-15c5-93802d2d3613
-begin
-	# Simply throw an error
-	f() = error()
-	@code_native f()
-end
+# ╔═╡ 36b723fc-8ee9-11eb-1b92-451b992acc0c
+f() = error();
 
 # ╔═╡ 8af63980-8af2-11eb-3028-83a935bac0db
 md"""
@@ -800,11 +845,11 @@ This code contains the `callq` instruction, which calls another function. A func
 However, if we show the assembly of this function:
 """
 
+# ╔═╡ 50ab0cf6-8ee9-11eb-3e04-af5fef7f2850
+call_plus(x) = x + 1;
+
 # ╔═╡ 93af6754-8af2-11eb-0fe6-216d76e683de
-begin
-	call_plus(x) = x + 1
-	code_native(call_plus, (Int,), debuginfo=:none)
-end
+with_terminal(() -> @code_native debuginfo=:none call_plus(1))
 
 # ╔═╡ a105bd68-8af2-11eb-31f6-3335b4fb0f08
 md"""
@@ -839,14 +884,15 @@ begin
 end;
 
 # ╔═╡ b4d9cbb8-8af2-11eb-247c-d5b16e0de13f
-begin
-	@btime time_function(noninline_poly, data)
-	@btime time_function(inline_poly, data);
+with_terminal() do
+	data = rand(UInt, 1024)
+	@btime time_function(noninline_poly, $data) seconds=1
+	@btime time_function(inline_poly, $data) seconds=1
 end
 
 # ╔═╡ bc0a2f22-8af2-11eb-3803-f54f84ddfc46
 md"""
-## Unrolling<a id='unrolling'></a>
+## Unrolling
 Consider a function that sums a vector of 64-bit integers. If the vector's data's memory offset is stored in register `%r9`, the length of the vector is stored in register `%r8`, the current index of the vector in `%rcx` and the running total in `%rax`, the assembly of the inner loop could look like this:
 
 ```
@@ -868,7 +914,7 @@ For a total of 4 instructions per element of the vector. The actual code generat
 
 However, if the function is written like this:
 
-```
+```julia
 function sum_vector(v::Vector{Int})
     n = 0
     i = 1
@@ -883,7 +929,7 @@ function sum_vector(v::Vector{Int})
 end
 ```
 
-The result is obviously the same if we assume the length of the vector is divisible by four. If the length is not divisible by four, we could simply use the function above to sum the first N - rem(N, 4) elements and add the last few elements in another loop. Despite the functionally identical result, the assembly of the loop is different and may look something like:
+The result is obviously the same if we assume the length of the vector is divisible by four. If the length is not divisible by four, we could simply use the function above to sum the first $N - rem(N, 4)$ elements and add the last few elements in another loop. Despite the functionally identical result, the assembly of the loop is different and may look something like:
 
 ```
 L1:
@@ -910,16 +956,75 @@ For a total of 7 instructions per 4 additions, or 1.75 instructions per addition
 Where you can see it is both unrolled by a factor of four, and uses 256-bit SIMD instructions, for a total of 128 bytes, 16 integers added per iteration, or 0.44 instructions per integer.
 
 Notice also that the compiler chooses to use 4 different `ymm` SIMD registers, `ymm0` to `ymm3`, whereas in my example assembly code, I just used one register `rax`. This is because, if you use 4 independent registers, then you don't need to wait for one `vpaddq` to complete (remember, it had a ~3 clock cycle latency) before the CPU can begin the next.
+
+The story for unrolling is similar to that for SIMD: The compiler will only unroll a loop if it can tell _for sure_ that it will not overshoot the number of iterations. For example, compare the two following functions:
+"""
+
+# ╔═╡ f0bc1fdc-8ee9-11eb-2916-d71e1cf36375
+with_terminal() do
+	data = fill(false, 2^20)
+	@btime any($data) seconds=1
+	@btime reduce(|, $data) seconds=1
+	
+	data[1] = true
+	@btime any($data) seconds=1
+	@btime reduce(|, $data) seconds=1
+end
+
+# ╔═╡ 36a2872e-8eeb-11eb-0999-4153ced71678
+md"""
+The _first_ function stops and returns as soon as it finds a `true` value - but this break in the loop disables SIMD and unrolling. The _second_ function continues throughout the entire array, even if the very first value is `true`. While this enables SIMD and unrolling, it's obviously wasteful if it sees a `true` right in the beginning. Hence, the first is better when we expect to see the first `true` before around 1/4th of the way though the array, the latter better otherwise.
+
+We can create a compromise by manually unrolling. In the functions below, `check128` checks 128 entries using `inbounds`, without stopping underway to check if it's found a `true`, and is thus unrolled and SIMDd. `unroll_compromise` then uses `check128`, but breaks out of the loop as soon as it finds a `true.`
+"""
+
+# ╔═╡ 9ca70cfc-8eeb-11eb-361b-b929089ca109
+begin
+	@inline function check128(data, i)
+	    n = false
+	    @inbounds for j in 0:127
+		    n |= data[i+j]
+	    end
+	    n
+    end
+	
+	function unroll_compromise(data)
+		found = false
+		i = 1
+		while !found & (i ≤ length(data))
+			check128(data, i) && return true
+			i += 128
+		end
+		return false
+	end
+end;
+
+# ╔═╡ d4a43094-8eeb-11eb-106f-3b54253aa663
+with_terminal() do
+	data = fill(false, 2^20)
+	@btime reduce(|, $data) seconds=1
+	@btime unroll_compromise($data) seconds=1
+	
+	data[1] = true
+	@btime any($data) seconds=1
+	@btime unroll_compromise($data) seconds=1
+end
+
+# ╔═╡ 270950ac-8eed-11eb-365d-df9d36d090bc
+md"""
+We see excellent performance for both arrays with no `trues`, and for the one with a `true` right in the beginning.
+
+Unfortunately, I'm not aware of any way to automatically generate this kind of unrolling, where you want a compromise between unrolling smaller chunks, and including branches in between each chunk. Perhaps in the future, this desire can be communicated to the compiler, such that the optimal code is automatically generated.
 """
 
 # ╔═╡ c36dc5f8-8af2-11eb-3f35-fb86143a54d2
 md"""
-## Avoid unpredicable branches<a id='branches'></a>
+## Avoid unpredicable branches
 As mentioned previously, CPU instructions take multiple cycles to complete, but may be queued into the CPU before the previous instruction has finished computing. So what happens when the CPU encounters a branch (i.e. a jump instruction)? It can't know which instruction to queue next, because that depends on the instruction that it just put into the queue and which has yet to be executed.
 
 Modern CPUs make use of *branch prediction*. The CPU has a *branch predictor* circuit, which guesses the correct branch based on which branches were recently taken. In essense, the branch predictor attempts to learn simple patterns in which branches are taken in code, while the code is running. After queueing a branch, the CPU immediately queues instructions from whatever branch predicted by the branch predictor. The correctness of the guess is verified later, when the queued branch is being executed. If the guess was correct, great, the CPU saved time by guessing. If not, the CPU has to empty the pipeline and discard all computations since the initial guess, and then start over. This process causes a delay of a few nanoseconds.
 
-For the programmer, this means that the speed of an if-statement depends on how easy it is to guess. If it is trivially easy to guess, the branch predictor will be correct almost all the time, and the if statement will take no longer than a simple instruction, typically 1 clock cycle. In a situation where the branching is random, it will be wrong about 50% of the time, and each misprediction may cost around 10 clock cycles.
+For the programmer, this means that the speed of an if-statement depends on how easy it is to guess. If it is trivially easy to guess, the branch predictor will be correct almost all the time, and the if statement will take no longer than a simple instruction, typically 1 clock cycle. In a situation where the branching is random, it will be wrong about 50% of the time, and each misprediction may cost many clock cycles.
 
 Branches caused by loops are among the easiest to guess. If you have a loop with 1000 elements, the code will loop back 999 times and break out of the loop just once. Hence the branch predictor can simply always predict "loop back", and get a 99.9% accuracy.
 
@@ -928,7 +1033,7 @@ We can demonstrate the performance of branch misprediction with a simple functio
 
 # ╔═╡ c96f7f50-8af2-11eb-0513-d538cf6bc619
 # Copy all odd numbers from src to dst.
-function copy_odds_branches!(dst::Vector{UInt}, src::Vector{UInt})
+function copy_odds_branches!(dst::Vector{T}, src::Vector{T}) where {T <: Integer}
     write_index = 1
     @inbounds for i in eachindex(src) # <--- this branch is trivially easy to predict
         v = src[i]
@@ -938,35 +1043,32 @@ function copy_odds_branches!(dst::Vector{UInt}, src::Vector{UInt})
         end
     end
     return dst
-end
+end;
 
 # ╔═╡ cf90c600-8af2-11eb-262a-2763ae29b428
-let
-	dst = rand(UInt, 5000)
-	src_random = rand(UInt, 5000)
-	src_all_odd = [2i+1 for i in src_random];
-	r_time = median_time(@benchmark copy_odds_branches!($dst, $src_random))
-	o_time = median_time(@benchmark copy_odds_branches!($dst, $src_all_odd))
-	md"
-* Copy from random: $r_time
-* Copy from all odds: $o_time
-	"
+with_terminal() do
+	dst = rand(UInt32, 2^18)
+	src_random = rand(UInt32, 2^18)
+	src_all_odd = [(2*i+1) % UInt32 for i in src_random]
+	@btime copy_odds_branches!($dst, $src_random) seconds=1
+	@btime copy_odds_branches!($dst, $src_all_odd) seconds=1
 end
 
 # ╔═╡ d53422a0-8af2-11eb-0417-b9740c4a571c
 md"""
-In the first case, the integers are random, and about half the branches will be mispredicted causing delays. In the second case, the branch is always taken, the branch predictor is quickly able to pick up the pattern and will reach near 100% correct prediction. As a result, on my computer, the latter is around 6x faster.
+In the first case, the integers are random, and about half the branches will be mispredicted causing delays. In the second case, the branch is always taken, the branch predictor is quickly able to pick up the pattern and will reach near 100% correct prediction. As a result, on my computer, the latter is around 8x faster.
 
 Note that if you use smaller vectors and repeat the computation many times, as the `@btime` macro does, the branch predictor is able to learn the pattern of the small random vectors by heart, and will reach much better than random prediction. This is especially pronounced in the most modern CPUs (and in particular the CPUs sold by AMD, I hear) where the branch predictors have gotten much better. This "learning by heart" is an artifact of the loop in the benchmarking process. You would not expect to run the exact same computation repeatedly on real-life data:
 """
 
 # ╔═╡ dc5b9bbc-8af2-11eb-0197-9b5da5087f0d
-begin
-	src_random = rand(UInt, 100)
-	src_all_odd = [2i+1 for i in src_random];
+with_terminal() do
+	src_random = rand(UInt32, 128)
+	dst = similar(src_random)
+	src_all_odd = [(2i+1) % UInt32 for i in src_random]
 	
-	@btime copy_odds!(dst, src_random)
-	@btime copy_odds!(dst, src_all_odd);
+	@btime copy_odds_branches!($dst, $src_random) seconds=1
+	@btime copy_odds_branches!($dst, $src_all_odd) seconds=1
 end
 
 # ╔═╡ e735a302-8af2-11eb-2ce7-01435b60fdd9
@@ -977,7 +1079,7 @@ If branches cannot be easily predicted, it is often possible to re-phrase the fu
 """
 
 # ╔═╡ eb158e60-8af2-11eb-2227-59d6404e3335
-function copy_odds_branchless!(dst::Vector{UInt}, src::Vector{UInt})
+function copy_odds_branchless!(dst::Vector{T}, src::Vector{T}) where {T <: Integer}
     write_index = 1
     @inbounds for i in eachindex(src)
         v = src[i]
@@ -985,24 +1087,20 @@ function copy_odds_branchless!(dst::Vector{UInt}, src::Vector{UInt})
         write_index += isodd(v)
     end
     return dst
-end
+end;
 
 # ╔═╡ ee579dca-8af2-11eb-140f-a96778b7b39f
-let
-	dst = rand(UInt, 5000)
-	src_random = rand(UInt, 5000)
-	src_all_odd = [2i+1 for i in src_random];
-	r_time = median_time(@benchmark copy_odds_branchless!($dst, $src_random))
-	o_time = median_time(@benchmark copy_odds_branchless!($dst, $src_all_odd))
-	md"
-* Copy from random: $r_time
-* Copy from all odds: $o_time
-	"
+with_terminal() do
+	dst = rand(UInt32, 2^18)
+	src_random = rand(UInt32, 2^18)
+	src_all_odd = [(2*i+1) % UInt32 for i in src_random]
+	@btime copy_odds_branchless!($dst, $src_random) seconds=1
+	@btime copy_odds_branchless!($dst, $src_all_odd) seconds=1
 end
 
 # ╔═╡ f969eed2-8af2-11eb-1e78-5b322a7f4ebd
 md"""
-Which contains no other branches than the one caused by the loop itself (which is easily predictable), and results in speeds somewhat worse than the perfectly predicted one, but much better for random data.
+Which contains no other branches than the one caused by the loop itself (which is easily predictable), and results in speeds slightly worse than the perfectly predicted one, but much better for random data.
 
 The compiler will often remove branches in your code when the same computation can be done using other instructions. When the compiler fails to do so, Julia offers the `ifelse` function, which sometimes can help elide branching.
 """
@@ -1013,7 +1111,7 @@ md"""
 
 Thinking about it more deeply, why *is* the perfectly predicted example above faster than the solution that avoids having that extra branch there at all?
 
-Let's look at the assembly code. Here, I've just cut out the assembly for the loop (since that executes 5000 times, and will domintate the time spent)
+Let's look at the assembly code. Here, I've just cut out the assembly for the loop (since almost all time is spent there)
 
 For the branch-ful version, we have:
 ```julia
@@ -1046,46 +1144,47 @@ The branch-ful executes 9 instructions per iteration (remember, all iterations h
 
 To understand what is happening, we need to go a little deeper into the CPU. In fact, the CPU does not execute CPU instructions in a linear fashion as the assembly code would have you believe. Instead, a more accurate (but still simplified) picture is the following:
 
-1. The CPU reads in CPU instructions. It then on-the-fly translates these CPU instructions to a set of even lower-level instructions called _microcode_. The important difference between microcode and CPU instructions is that while only a few different registers can be referred to by the instructions, the actual processor has many more registers, which can be adressed by microcode.
+1. The CPU reads in CPU instructions. It then on-the-fly translates these CPU instructions to a set of even lower-level instructions called _micro-operations_ or _µops_. The important difference between µops and CPU instructions is that while only a few different registers can be referred to by the instructions, the actual processor has many more registers, which can be adressed by µops. Code written with µops is called _microcode_.
 
-2. This microcode is loaded into an internal array called the *reorder buffer* for storage. A CPU may hold more than 200 instructions in the reorder buffer at a time. The purpose of this storage is to allow execution of microcode in a highly parallel way. The code is then sent to execution
+2. This microcode is loaded into an internal array called the *reorder buffer* for storage. A CPU may hold more than 200 instructions in the reorder buffer at a time. The purpose of this storage is to allow execution of microcode in a highly parallel way. The code is then sent to execution in bulk.
 
-3. The results from the reorder buffer is then shipped out in the correct order.
+3. Finally, results from the reorder buffer is then shipped out to memory in the correct order.
 
-The existance of a re-order buffer has two important implications (that I know about for how you should think about your code:
+The existance of a re-order buffer has two important implications (that I know about) for how you should think about your code:
 
 First, your code is executed in large chunks often in parallel, not necessarily in the same order as it was loaded in. Therefore, _a program with more, slower CPU instructions can be faster than a program with fewer, faster instructions_, if the former program manages to execute more of them in parallel.
 
-Second, branch prediction (as discussed in the previous section) does not happen just for the upcoming branch, but instead for a large amount of future branches, simultaneously. 
+Second, branch prediction (as discussed in the previous section) does not happen just for the upcoming branch, but instead for a large amount of future branches, simultaneously.
 
-When visualizing how the code of the small `copy_odds_branches!` loop above is executed, you may imagine that the branch predictor predicts all branches, say, 6 iterations of the loop into the future, loads the code of the six future iterations into the reorder buffer, executes them all in parallel, and then verifies that its branches were guessed correctly.
+When visualizing how the code of the small `copy_odds_branches!` loop above is executed, you may imagine that the branch predictor predicts all branches, say, 6 iterations of the loop into the future, loads the microcode of all 6 future iterations into the reorder buffer, executes them all in parallel, and _then_ verifies - still in parallel - that its branches were guessed correctly.
 
-Let's think about this process for a moment. What kind of code can re write that messes up that workflow for the CPU?
+ Indicentally, this bulk processing is why a branch mispredict is so bad for performance - if a branch turns out to be mispredicted, all the work in the reorder buffer must be scrapped, the and the CPU must start over with fetching new instructions, compile them to microcode, fill the buffer et cetera.
+
+Let's think about the implications re-order buffer for a moment. Other than creating hard-to-predict branches, what kind of code can re write that messes up that workflow for the CPU?
 
 What if we do this?
 """
 
 # ╔═╡ 7732b6d8-8dab-11eb-0bc2-19690386ec27
-function read_indices(dst::Vector{UInt}, src::Vector{UInt})
+function read_indices(dst::Vector{T}, src::Vector{T}) where {T <: Integer}
 	i = 1
 	while i ≤ lastindex(src) - 1
 		i = src[i] + 1
 		dst[i] = i
 	end
 	return dst
-end
+end;
 
 # ╔═╡ 29463b02-8dab-11eb-0bf5-23a3f4075b32
-let
-	dst = rand(UInt, 5000)
-	src = collect(UInt(1):UInt(5000))
-	
-	median_time(@benchmark read_indices($dst, $src))
+with_terminal() do
+	dst = rand(UInt32, 2^18)
+	src = UInt32.(eachindex(dst))
+	@btime read_indices($dst, $src) seconds=1
 end
 
 # ╔═╡ a5d93434-8dac-11eb-34bf-91061089f0ef
 md"""
-If you think about it, `read_indices` does strictly less work than any of the `copy_odds` functions. It doesn't even check if the numbers it copies are odd. Yet it's four times slower than copy_odds! In fact, on the computer I'm typing this, it's around as slow as the one with the constant mispredictions.
+If you think about it, `read_indices` does strictly less work than any of the `copy_odds` functions. It doesn't even check if the numbers it copies are odd. Yet it's more than three times slower than `copy_odds_branches`!
 
 The difference is *memory dependencies*. We humans, seeing that the input data is simply a range of numbers, can tell _precisely_ what the function should do at every iteration: Simply copy the next number over. But the compiler _can't_ predict what the next number it loads will be, and therefore where it needs to store the loaded number. We say that the code has a memory dependency on the number it loads from `src`.
 
@@ -1105,19 +1204,19 @@ Modern CPUs are able to adjust their clock speeds according to the CPU temperatu
 As a programmer, there is not much you can do to take CPU temperature into account, but it is good to know. In particular, variations in CPU temperature often explain observed difference in performance:
 
 * CPUs usually work fastest at the beginning of a workload, and then drop in performance as it reaches maximal temperature
-* SIMD instructions usually require more power than ordinary instructions, generating more heat, and lowering the clock frequency. This can offset some performance gains of SIMD, but SIMD will still always be more efficient when applicable
+* SIMD instructions usually require more power than ordinary instructions, generating more heat, and lowering the clock frequency. This can offset some performance gains of SIMD, but SIMD will nearly always be more efficient when applicable. One exception is the relatively recent 512-bit SIMD instructions. In current (2021) CPUs, these instructions draw so much power that the resulting clock frequency lowering actually leads to overall performance decrease. This problem will probably be solved in the near future, either by the power draw begin reduced, by consumer chips abandoning 512-bit SIMD, or by compilers refusing to compile to these instructions.
 """
 
 # ╔═╡ 119d269c-8af3-11eb-1fdc-b7ac75b89cf2
 md"""
-## Multithreading<a id='multithreading'></a>
-In the bad old days, CPU clock speed would increase every year as new processors were brought onto the market. Partially because of heat generation, this acceleration slowed down once CPUs hit the 3 GHz mark. Now we see only minor clock speed increments every processor generation. Instead of raw speed of execution, the focus has shifted on getting more computation done per clock cycle. CPU caches, CPU pipelining, branch prediction and SIMD instructions are all important progresses in this area, and have all been covered here.
+## Multithreading
+In the bad old days, CPU clock speed would increase every year as new processors were brought onto the market. Partially because of heat generation, this acceleration slowed down once CPUs hit the 3 GHz mark. Now we see only minor clock speed increments every processor generation. Instead of raw speed of execution, the focus has shifted on getting more computation done per clock cycle. CPU caches, CPU pipelining (i.e. the entire re-order buffer "workflow"), branch prediction and SIMD instructions are all important contibutions in this area, and have all been covered here.
 
-Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel. Furthermore, many CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors. For example, I am writing this on a laptop with an Intel Core i9-9880H CPU. This CPU has 8 cores, but various operating systems like Windows or Linux would show 16 "CPUs" in the systems monitor program.
+Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel. Furthermore, many CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a branch misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors. 
 
 Hyperthreading only really matters when your threads are sometimes prevented from doing work. Besides CPU-internal causes like cache misses, a thread can also be paused because it is waiting for an external resource like a webserver or data from a disk. If you are writing a program where some threads spend a significant time idling, the core can be used by the other thread, and hyperthreading can show its value.
 
-Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. You can set the environment variable `JULIA_NUM_THREADS` before starting Julia. I have 8 cores on this CPU, all with hyperthreading so I have set the number of threads to 16:
+Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. To do this, start Julia with the `-t` option - e.g. `-t 8` for 8 threads. I have set Julia to have 4 threads:
 """
 
 # ╔═╡ 1886f60e-8af3-11eb-2117-eb0014d2fca1
@@ -1135,7 +1234,7 @@ function half_asleep(start::Bool)
         start || sleep(0.06)
     end
     return a
-end
+end;
 
 # ╔═╡ 1ecf434a-8af3-11eb-3c49-cb21c6a80bfc
 function parallel_sleep(n_jobs)
@@ -1144,10 +1243,10 @@ function parallel_sleep(n_jobs)
         push!(jobs, Threads.@spawn half_asleep(isodd(job)))
     end
     return sum(fetch, jobs)
-end
+end;
 
 # ╔═╡ 2192c228-8af3-11eb-19d8-81db4f3c0d81
-begin
+with_terminal() do
 	parallel_sleep(1); # run once to compile it
 	for njobs in (1, 4, 8, 16, 32)
 		@time parallel_sleep(njobs);
@@ -1156,12 +1255,12 @@ end
 
 # ╔═╡ 2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
 md"""
-You can see that with this task, my computer can run 16 jobs in parallel almost as fast as it can run 1. But 32 jobs takes much longer.
+You can see that with this task, my computer can run 8 jobs in parallel almost as fast as it can run 1. But 16 jobs takes much longer. This is because 4 can run at the same time, and 4 more can sleep for a total of 8 concurrent jobs.
 
-For CPU-constrained programs, the core is kept busy with only one thread, and there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Most workloads are not that optimized and can really benefit from hyperthreading, so we'll stick with 16 threads for now.
+For CPU-constrained programs, the core is kept busy with only one thread, and there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Most workloads are not that optimized and can really benefit from hyperthreading, however.
 
 #### Parallelizability
-Multithreading is more difficult that any of the other optimizations, and should be one of the last tools a programmer reaches for. However, it is also an impactful optimization. Compute clusters usually contain CPUs with tens of CPU cores, offering a massive potential speed boost ripe for picking.
+Multithreading is more difficult that any of the other optimizations, and should be one of the last tools a programmer reaches for. However, it is also an impactful optimization. Scientific compute clusters usually contain many (e.g. hundreds, or thousands) of CPUs with tens of CPU cores each, offering a massive potential speed boost ripe for picking.
 
 A prerequisite for efficient use of multithreading is that your computation is able to be broken up into multiple chunks that can be worked on independently. Luckily the majority of compute-heavy tasks (at least in my field of work, bioinformatics), contain sub-problems that are *embarassingly parallel*. This means that there is a natural and easy way to break it into sub-problems that can be processed independently. For example, if a certain __independent__ computation is required for 100 genes, it is natural to use one thread for each gene. The size of the problem is also important. There is a small overhead involved with spawning (creating) a thread, and fetching the result from the computation of a thread. Therefore, for it to pay off, each thread should have a task that takes at least a few microseconds to complete.
 
@@ -1171,185 +1270,6 @@ The Julia set I create below is defined thus: We define a function $f(z) = z^2 +
 
 First, let's see a non-parallel solution:
 """
-
-# ╔═╡ 3e83981a-8af3-11eb-3c87-77797adb7e1f
-md"That took around 10 seconds on my computer. Now for a parallel one:"
-
-# ╔═╡ 4e8f6cb8-8af3-11eb-1746-9384995d7022
-md"""
-This is almost exactly 16 times as fast! With 16 threads, this is close to the best case scenario, only possible for near-perfect embarrasingly parallel tasks.
-
-Despite the potential for great gains, in my opinion, multithreading should be one of the last resorts for performance improvements, for three reasons:
-
-1. Implementing multithreading is harder than other optimization methods in many cases. In the example shown, it was very easy. In a complicated workflow, it can get messy quickly.
-2. Multithreading can cause hard-to-diagnose and erratic bugs. These are almost always related to multiple threads reading from, and writing to the same memory. For example, if two threads both increment an integer with value `N` at the same time, the two threads will both read `N` from memory and write `N+1` back to memory, where the correct result of two increments should be `N+2`! Infuriatingly, these bugs appear and disappear unpredictably, since they are causing by unlucky timing. These bugs of course have solutions, but it is tricky subject outside the scope of this document.
-3. Finally, achieving performance by using multiple threads is really achieving performance by consuming more resources, instead of gaining something from nothing. Often, you pay for using more threads, either literally when buying cloud compute time, or when paying the bill of increased electricity consumption from multiple CPU cores, or metaphorically by laying claim to more of your users' CPU resources they could use somewhere else. In contrast, more *efficent* computation costs nothing.
-"""
-
-# ╔═╡ 3756754c-8dae-11eb-2d45-b147ded34c10
-md"""
-## Avoid false sharing
-
-Let's have another example where we put into practise what I just told you about multithreading:
-
-* To avoid complex bugs, let's keep it simple. Just increment every element of an array by 1. What could be simpler?
-* We use a large array, so that each thread has plenty of work to do. That means the overhead of spawning the threads shouldn't be an issue.
-* We make absolutely sure each thread don't read or write from the same memory.
-
-Each of the $N$ threads should execute the following function, to increment every $N$th index:
-"""
-
-# ╔═╡ c5281dee-8dae-11eb-0840-ef40296b7445
-function thread_increment_array!(arr::Vector{<:Integer}, thread::Int, nthreads::Int)
-	for i in thread:nthreads:lastindex(arr)
-		arr[i] += one(eltype(arr))
-	end
-end
-
-# ╔═╡ e3c25e3c-8db0-11eb-3159-95d419cb13d6
-md"We spawn and fetch the threads from this main function:"
-
-# ╔═╡ 2afacda6-8daf-11eb-105d-07f35cd6caeb
-function multithread_increment_array!(f, arr::Vector{<:Integer}, nthreads::Int)
-	results = map(1:nthreads) do thread
-		Threads.@spawn f(arr, thread, nthreads)
-	end
-	foreach(fetch, results)
-	arr
-end	
-
-# ╔═╡ efeb7970-8db0-11eb-1659-bd8f548521e7
-md"And then we time it:"
-
-# ╔═╡ 83c10aea-8daf-11eb-2efc-7df53139edfb
-let
-	data = rand(UInt, 2^24)
-	
-	times = map([1, 2, 4, 8]) do nthreads
-		median_time(@benchmark multithread_increment_array!(thread_increment_array!, $data,  $nthreads))
-	end
-	
-	md"""
-Times:
-* 1 thread: $(times[1])
-* 2 threads: $(times[2])
-* 4 threads: $(times[3])
-* 8 threads: $(times[4])
-	"""
-end
-
-# ╔═╡ 35825e36-8db1-11eb-0254-999ad38a4aca
-md"""
-So, what happened there? Why did it get slower the more threads I added? Shouldn't the one with 8 threads be nearly 8 times faster? Since it's more than 3 times slower, where did the 25x relative slowdown come from?
-
-Well, remember from the CPU cache session that I teased that there are several layers of CPU cache? Well, now is the time to dig a little bit into that.
-
-The problem with CPU caches are cache misses. They're just too slow. What if the CPU cache had a cache? A cache miss could then just fetch data from *that cache*.
-
-It turns out it does. The CPU's immediate cache is called the L1 (level 1) cache. On my computer it's 32 KiB (2^18 bit) in size. That cache then *also* has a cache called the L2 cache, 512 KiB (2^22 bit) in size It's larger, but also slower. Finally, the L2's cache is the L3 cache, 8 MiB (2^26 bit) in size, even larger and even slower. At point, apparently the engineers thought a hypothetical L4 cache would be too slow to matter, so they stopped there.
-
-The relevant part here is that *each core* has its own L1 and L2 cache (32 + 512 KiB each), whereas the L3 cache is shared between 2 pools of 4 cores. 
-
-And remember when I said that the CPU fetches one _cache line_ (usually 64 bytes) at a time to their cache? It also writes back 64 bytes at a time. Think about how this affects multithreading:
-
-the CPU loads a _cache line_ (usually 64 bytes) from memory at a time? Well, consider what happens when executing the function above with two threads, and a vector initially of zeros. Both threads load a cache line:
-
-```
-thread1    [0, 0, 0, 0, 0, 0, 0, 0]
-thread2    [0, 0, 0, 0, 0, 0, 0, 0]
-```
-increment their indices
-```
-thread1    [1, 0, 1, 0, 1, 0, 1, 0]
-thread2    [0, 1, 0, 1, 0, 1, 0, 1]
-```
-and... then what? They can't both write back their cache lines to the main memory (or rather, to their shared cache), because they would overwrite each other. One thread has to write first, then force a cache miss from the other thread, in order to get the result right. Or something like that - I don't know how the threads actually manage to coordinate to get the right result, but it involves forcing each other to cache miss. We call this process [false sharing](https://en.wikipedia.org/wiki/False_sharing).
-
-I also suspect the huge jump in the time spent we see from 4 to 8 threads comes about because of the strange cache layout of my particuar CPU where 4 cores share a single L3 cache. With 4 threads, they can force each other to cache miss, syncronizing in the common L3 cache. With 8 threads, they must syncronize in RAM.
-
-The lesson of all this is pretty simple: When multithreading, *don't let several threads write to the same cache line*.
-
-We can fix the above code quite easily: Instead of writing to every $N$th element, we split the array into $N$ chunks:
-"""
-
-# ╔═╡ 7efeaaca-8db5-11eb-12f2-55f2bf127d59
-function better_thread_increment_array!(arr::Vector{<:Integer}, thread::Int, nthreads::Int)
-	chunklen = div(length(arr), nthreads)
-	arr2 = unsafe_wrap(Array, pointer(arr, (thread-1)*chunklen+1), chunklen)
-	@inbounds for i in eachindex(arr2)
-		arr2[i] += one(eltype(arr2))
-	end
-end
-
-# ╔═╡ 12df3b04-8db5-11eb-2fe1-675c0d8cb771
-let
-	data = rand(UInt, 2^24)
-	
-	times = map([1, 8]) do nthreads
-		median_time(@benchmark multithread_increment_array!(better_thread_increment_array!, $data,  $nthreads) seconds=1)
-	end
-	
-	md"""
-Times:
-* 1 thread: $(times[1])
-* 8 threads: $(times[2])
-	"""
-end
-
-# ╔═╡ 687aca56-8e7b-11eb-32b8-41ed6cea8f7c
-
-
-# ╔═╡ 54d2a5b8-8af3-11eb-3273-85d551fceb7b
-md"""
-## GPUs<a id='gpus'></a>
-So far, we've covered only the most important kind of computing chip, the CPU. But there are many other kind of chips out there. The most common kind of alternative chip is the *graphical processing unit* or GPU.
-
-As shown in the above example with the Julia set, the task of creating computer images are often embarassingly parallel with an extremely high degree of parallelizability. In the limit, the value of each pixel is an independent task. This calls for a chip with a high number of cores to do effectively. Because generating graphics is a fundamental part of what computers do, nearly all commercial computers contain a GPU. Often, it's a smaller chip integrated into the motherboard (*integrated graphics*, popular in small laptops). Other times, it's a large, bulky card.
-
-GPUs have sacrificed many of the bells and whistles of CPUs covered in this document such as specialized instructions, SIMD and branch prediction. They also usually run at lower frequencies than CPUs. This means that their raw compute power is many times slower than a CPU. To make up for this, they have a high number of cores. For example, the high-end gaming GPU NVIDIA RTX 2080Ti has 4,352 cores. Hence, some tasks can experience 10s or even 100s of times speedup using a GPU. Most notably for scientific applications, matrix and vector operations are highly parallelizable.
-
-Unfortunately, the laptop I'm writing this document on has only integrated graphics, and there is not yet a stable way to interface with integrated graphics using Julia, so I cannot show examples.
-
-There are also more esoteric chips like TPUs (explicitly designed for low-precision tensor operations common in deep learning) and ASICs (an umbrella term for highly specialized chips intended for one single application). At the time of writing, these chips are uncommon, expensive, poorly supported and have limited uses, and are therefore not of any interest for non-computer science researchers.
-"""
-
-# ╔═╡ a0286cdc-8af1-11eb-050e-072acdd4f0a0
-begin
-	# Make sure the vector is small enough to fit in cache so we don't time cache misses
-	data = rand(UInt64, 4096);
-	@btime sum_nosimd(data)
-	@btime sum_simd(data);
-end
-
-# ╔═╡ 14e46866-8af2-11eb-0894-bba824f266f0
-begin
-	data = rand(UInt, 10000)
-	@btime sum(manual_count_ones, data)
-	@btime sum(count_ones, data);
-end
-
-# ╔═╡ 94182f88-8af1-11eb-207a-37083c1ead68
-begin
-	function sum_nosimd(x::Vector)
-		n = zero(eltype(x))
-		for i in eachindex(x)
-			n += x[i]
-		end
-		return n
-	end
-
-	function sum_simd(x::Vector)
-		n = zero(eltype(x))
-		# By removing the boundscheck, we allow automatic SIMD
-		@inbounds for i in eachindex(x)
-			n += x[i]
-		end
-		return n
-	end
-end
-
-# ╔═╡ 4be905b4-8af3-11eb-0344-dbdc7e94ddf3
-@time M = julia();
 
 # ╔═╡ 316e5074-8af3-11eb-256b-c5b212f7e0d3
 begin
@@ -1375,41 +1295,23 @@ begin
 	end
 
 	"Create a Julia fractal image"
-	function julia()
-		M = Matrix{UInt8}(undef, 20000, 5000)
+	function julia_single_threaded()
+		M = Matrix{UInt8}(undef, 5000, 5000)
 		for (x, real) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 2)))
 			fill_column!(M, x, real)
 		end
 		return M
-	end;
-end
+	end
+end;
 
-# ╔═╡ e793e300-8af1-11eb-2c89-e7bc1be249f0
-function sum_simd(x::Vector)
-    n = zero(eltype(x))
-    # Here we add the `@simd` macro to allow SIMD of floats
-    @inbounds @simd for i in eachindex(x)
-        n += x[i]
-    end
-    return n
-end
+# ╔═╡ 37cd1f1c-8ee9-11eb-015c-ade9efc27708
+with_terminal(() -> @code_native f())
 
 # ╔═╡ 39a85a58-8af3-11eb-1334-6f50ed9acd31
-@time M = julia();
+with_terminal(() -> @time julia_single_threaded())
 
-# ╔═╡ e8d2ec8e-8af1-11eb-2018-1fa4df5b47ad
-begin
-	data = rand(Float64, 4096)
-	@btime sum_nosimd(data)
-	@btime sum_simd(data);
-end
-
-# ╔═╡ cc99d9ce-8af1-11eb-12ec-fbd6df3becc8
-begin
-	data = rand(Float64, 4096)
-	@btime sum_nosimd(data)
-	@btime sum_simd(data);
-end
+# ╔═╡ 3e83981a-8af3-11eb-3c87-77797adb7e1f
+md"That took around 8.2 seconds on my computer. Now for a parallel one:"
 
 # ╔═╡ 3e1c4090-8af3-11eb-33d0-b9c299fef20d
 begin
@@ -1428,48 +1330,76 @@ begin
 		end
 	end
 
-	function julia()
-		M = Matrix{UInt8}(undef, 20000, 5000)
+	function julia_multi_threaded()
+		M = Matrix{UInt8}(undef, 5000, 5000)
 		recursive_fill_columns!(M, 1:size(M, 2))
 		return M
-	end;
-end
+	end
+end;
+
+# ╔═╡ 4be905b4-8af3-11eb-0344-dbdc7e94ddf3
+with_terminal(() -> @time julia_multi_threaded())
+
+# ╔═╡ 4e8f6cb8-8af3-11eb-1746-9384995d7022
+md"""
+This is almost exactly 4 times as fast! With 4 threads, this is close to the best case scenario, only possible for near-perfect embarrasingly parallel tasks.
+
+Despite the potential for great gains, in my opinion, multithreading should be one of the last resorts for performance improvements, for three reasons:
+
+1. Implementing multithreading is harder than other optimization methods in many cases. In the example shown, it was very easy. In a complicated workflow, it can get messy quickly.
+2. Multithreading can cause hard-to-diagnose and erratic bugs. These are almost always related to multiple threads reading from, and writing to the same memory. For example, if two threads both increment an integer with value `N` at the same time, the two threads will both read `N` from memory and write `N+1` back to memory, where the correct result of two increments should be `N+2`! Infuriatingly, these bugs appear and disappear unpredictably, since they are causing by unlucky timing. These bugs of course have solutions, but it is tricky subject outside the scope of this document.
+3. Finally, achieving performance by using multiple threads is really achieving performance by consuming more resources, instead of gaining something from nothing. Often, you pay for using more threads, either literally when buying cloud compute time, or when paying the bill of increased electricity consumption from multiple CPU cores, or metaphorically by laying claim to more of your users' CPU resources they could use somewhere else. In contrast, more *efficent* computation costs nothing.
+"""
+
+# ╔═╡ 54d2a5b8-8af3-11eb-3273-85d551fceb7b
+md"""
+## GPUs
+So far, we've covered only the most important kind of computing chip, the CPU. But there are many other kind of chips out there. The most common kind of alternative chip is the *graphical processing unit* or GPU.
+
+As shown in the above example with the Julia set, the task of creating computer images are often embarassingly parallel with an extremely high degree of parallelizability. In the limit, the value of each pixel is an independent task. This calls for a chip with a high number of cores to do effectively. Because generating graphics is a fundamental part of what computers do, nearly all commercial computers contain a GPU. Often, it's a smaller chip integrated into the motherboard (*integrated graphics*, popular in small laptops). Other times, it's a large, bulky card.
+
+GPUs have sacrificed many of the bells and whistles of CPUs covered in this document such as specialized instructions, SIMD and branch prediction. They also usually run at lower frequencies than CPUs. This means that their raw compute power is many times slower than a CPU. To make up for this, they have a high number of cores. For example, the high-end gaming GPU NVIDIA RTX 2080Ti has 4,352 cores. Hence, some tasks can experience 10s or even 100s of times speedup using a GPU. Most notably for scientific applications, matrix and vector operations are highly parallelizable.
+
+Unfortunately, the laptop I'm writing this document on has only integrated graphics, and there is not yet a stable way to interface with integrated graphics using Julia, so I cannot show examples.
+
+There are also more esoteric chips like TPUs (explicitly designed for low-precision tensor operations common in deep learning) and ASICs (an umbrella term for highly specialized chips intended for one single application). At the time of writing, these chips are uncommon, expensive, poorly supported and have limited uses, and are therefore not of any interest for non-computer science researchers.
+"""
 
 # ╔═╡ Cell order:
-# ╠═15f5c31a-8aef-11eb-3f19-cf0a4e456e7a
-# ╠═5dd2329a-8aef-11eb-23a9-7f3c325bcf74
+# ╟─15f5c31a-8aef-11eb-3f19-cf0a4e456e7a
+# ╟─5dd2329a-8aef-11eb-23a9-7f3c325bcf74
 # ╠═7490def0-8aef-11eb-19ce-4b11ce5a9328
 # ╟─6532c868-8e7d-11eb-1b6d-23ccfc14e798
 # ╠═675e66aa-8aef-11eb-27be-5fe273e33297
 # ╠═800d827e-8c20-11eb-136a-97a622a7c1e6
-# ╠═88c17a2e-8aef-11eb-2e92-21b458980167
-# ╠═9a24985a-8aef-11eb-104a-bd9abf0adc6d
-# ╠═a2fad250-8aef-11eb-200f-e5f8caa57a67
+# ╟─88c17a2e-8aef-11eb-2e92-21b458980167
+# ╟─9a24985a-8aef-11eb-104a-bd9abf0adc6d
+# ╟─a2fad250-8aef-11eb-200f-e5f8caa57a67
 # ╠═abb45d6a-8aef-11eb-37a4-7b10847b39b4
 # ╠═bff99828-8aef-11eb-107b-a5c67101c735
-# ╠═cdde6fe8-8aef-11eb-0a3c-77e28f7a2c09
-# ╠═f58d428c-8aef-11eb-3127-89d729e23823
-# ╠═d2344578-8c10-11eb-2004-7fec261bb616
-# ╠═c6da4248-8c19-11eb-1c16-093695add9a9
+# ╟─cdde6fe8-8aef-11eb-0a3c-77e28f7a2c09
+# ╟─f58d428c-8aef-11eb-3127-89d729e23823
+# ╠═b73605ca-8ee4-11eb-1a0d-bb6678de91c6
+# ╟─c6da4248-8c19-11eb-1c16-093695add9a9
 # ╠═ffca4c72-8aef-11eb-07ac-6d5c58715a71
-# ╠═d4c67b82-8c1a-11eb-302f-b79c86412ce5
-# ╠═f8ce37a0-8c19-11eb-3703-798a8e01c24a
-# ╠═0f2ac53c-8c1b-11eb-3841-27f4ea1e9617
-# ╠═12f1228a-8af0-11eb-0449-230ae20bfa7a
+# ╟─d4c67b82-8c1a-11eb-302f-b79c86412ce5
+# ╠═e71e4798-8ee4-11eb-3ea2-fdbbcdcf7410
+# ╟─0f2ac53c-8c1b-11eb-3841-27f4ea1e9617
+# ╟─12f1228a-8af0-11eb-0449-230ae20bfa7a
 # ╠═18e8e4b6-8af0-11eb-2f17-2726f162e9b0
-# ╠═1ea62e0e-8af0-11eb-3585-3d747b8b7fab
+# ╠═1f38f8c6-8ee5-11eb-1c01-f3706534a9cf
 # ╟─3a1efd5a-8af0-11eb-21a2-d1011f16555c
 # ╠═3fae31a0-8af0-11eb-1ea8-7980e7875039
 # ╟─5b10a2b6-8af0-11eb-3fe7-4b78b4c22550
 # ╠═6061dc94-8af0-11eb-215a-4f3af731774e
 # ╟─624eae74-8af0-11eb-025b-8b68dc55f31e
-# ╠═bf53112a-8e81-11eb-3f7d-17b3f5a7d594
+# ╠═d4c8c38c-8ee6-11eb-0b49-33fbfbd214f3
 # ╟─7b979410-8af0-11eb-299c-af0a5d740c24
-# ╠═8802ff60-8af0-11eb-21ac-b9fdbeac7c24
+# ╟─8802ff60-8af0-11eb-21ac-b9fdbeac7c24
 # ╠═a36582d4-8af0-11eb-2b5a-e577c5ed07e2
 # ╠═a74a9966-8af0-11eb-350f-6787d2759eba
 # ╟─ae9ee028-8af0-11eb-10c0-6f2db3ab8025
-# ╠═b73b5eaa-8af0-11eb-191f-cd15de19bc38
+# ╟─b73b5eaa-8af0-11eb-191f-cd15de19bc38
 # ╟─c0c757b2-8af0-11eb-38f1-3bc3ec4c43bc
 # ╠═c5472fb0-8af0-11eb-04f1-95a1f7b6b9e0
 # ╟─ce0e65d4-8af0-11eb-0c86-2105c26b62eb
@@ -1480,18 +1410,16 @@ end
 # ╠═e836dac8-8af0-11eb-1865-e3feeb011fc4
 # ╟─ecfd04e4-8af0-11eb-0962-f548d2eabad3
 # ╠═f0e24b50-8af0-11eb-1a0e-5d925f3743e0
-# ╠═fcaa433e-8af0-11eb-3f1d-bdabc6d27d6b
-# ╠═ffb5c6c0-8af0-11eb-229c-4194e31bc3ac
-# ╠═13f4030e-8af1-11eb-2c9f-2527fbcbbe32
+# ╠═11c500e8-8ee2-11eb-3291-4382b60c5a2b
 # ╟─22512ab2-8af1-11eb-260b-8d6c16762547
 # ╠═2a7c1fc6-8af1-11eb-2909-554597aa2949
-# ╠═2e3304fe-8af1-11eb-0f6a-0f84d58326bf
+# ╟─2e3304fe-8af1-11eb-0f6a-0f84d58326bf
 # ╠═33350038-8af1-11eb-1ff5-6d42d86491a3
 # ╟─3713a8da-8af1-11eb-2cb2-1957455227d0
 # ╠═59f58f1c-8af1-11eb-2e88-997e9d4bcc48
 # ╟─5c86e276-8af1-11eb-2b2e-3386e6795f37
 # ╠═61ee9ace-8af1-11eb-34bd-c5af962c8d82
-# ╠═6849d9ec-8af1-11eb-06d6-db49af4796bc
+# ╟─6849d9ec-8af1-11eb-06d6-db49af4796bc
 # ╠═6ba266f4-8af1-11eb-10a3-3daf6e473142
 # ╟─74a3ddb4-8af1-11eb-186e-4d80402adfcf
 # ╠═7a88c4ba-8af1-11eb-242c-a1813a9e6741
@@ -1511,57 +1439,55 @@ end
 # ╟─f5c28c92-8af1-11eb-318f-5fa059d8fd80
 # ╠═fc2d2f1a-8af1-11eb-11a4-8700f94e866e
 # ╟─007cd39a-8af2-11eb-053d-f584d68f7d2f
+# ╠═72fbb3ec-8ee8-11eb-3836-11092ef74e86
 # ╠═054d848a-8af2-11eb-1f98-67f5d0b9f4ec
 # ╟─0dfc5054-8af2-11eb-098d-35f4e69ae544
 # ╠═126300a2-8af2-11eb-00ea-e76a979aef45
 # ╠═14e46866-8af2-11eb-0894-bba824f266f0
 # ╟─1e7edfdc-8af2-11eb-1429-4d4220bad0f0
 # ╠═25a47c54-8af2-11eb-270a-5b58c3aafe6e
-# ╠═2dc4f936-8af2-11eb-1117-9bc10e619ec6
+# ╟─2dc4f936-8af2-11eb-1117-9bc10e619ec6
 # ╠═76a4e83c-8af2-11eb-16d7-75eaabcb21b6
 # ╟─797264de-8af2-11eb-0cb0-adf3fbc95c90
 # ╟─80179748-8af2-11eb-0910-2b825104159d
-# ╠═84e49eec-8af2-11eb-15c5-93802d2d3613
+# ╠═36b723fc-8ee9-11eb-1b92-451b992acc0c
+# ╠═37cd1f1c-8ee9-11eb-015c-ade9efc27708
 # ╟─8af63980-8af2-11eb-3028-83a935bac0db
+# ╠═50ab0cf6-8ee9-11eb-3e04-af5fef7f2850
 # ╠═93af6754-8af2-11eb-0fe6-216d76e683de
 # ╟─a105bd68-8af2-11eb-31f6-3335b4fb0f08
 # ╠═a843a0c2-8af2-11eb-2435-17e2c36ec253
 # ╠═b4d9cbb8-8af2-11eb-247c-d5b16e0de13f
 # ╟─bc0a2f22-8af2-11eb-3803-f54f84ddfc46
-# ╠═c36dc5f8-8af2-11eb-3f35-fb86143a54d2
+# ╠═f0bc1fdc-8ee9-11eb-2916-d71e1cf36375
+# ╟─36a2872e-8eeb-11eb-0999-4153ced71678
+# ╠═9ca70cfc-8eeb-11eb-361b-b929089ca109
+# ╠═d4a43094-8eeb-11eb-106f-3b54253aa663
+# ╟─270950ac-8eed-11eb-365d-df9d36d090bc
+# ╟─c36dc5f8-8af2-11eb-3f35-fb86143a54d2
 # ╠═c96f7f50-8af2-11eb-0513-d538cf6bc619
 # ╠═cf90c600-8af2-11eb-262a-2763ae29b428
-# ╠═d53422a0-8af2-11eb-0417-b9740c4a571c
+# ╟─d53422a0-8af2-11eb-0417-b9740c4a571c
 # ╠═dc5b9bbc-8af2-11eb-0197-9b5da5087f0d
-# ╠═e735a302-8af2-11eb-2ce7-01435b60fdd9
+# ╟─e735a302-8af2-11eb-2ce7-01435b60fdd9
 # ╠═eb158e60-8af2-11eb-2227-59d6404e3335
 # ╠═ee579dca-8af2-11eb-140f-a96778b7b39f
 # ╟─f969eed2-8af2-11eb-1e78-5b322a7f4ebd
-# ╠═72e1b146-8c1c-11eb-2c56-b1342271c2f6
+# ╟─72e1b146-8c1c-11eb-2c56-b1342271c2f6
 # ╠═7732b6d8-8dab-11eb-0bc2-19690386ec27
 # ╠═29463b02-8dab-11eb-0bf5-23a3f4075b32
-# ╠═a5d93434-8dac-11eb-34bf-91061089f0ef
+# ╟─a5d93434-8dac-11eb-34bf-91061089f0ef
 # ╟─0b6d234e-8af3-11eb-1ba9-a1dcf1497785
 # ╟─119d269c-8af3-11eb-1fdc-b7ac75b89cf2
 # ╠═1886f60e-8af3-11eb-2117-eb0014d2fca1
 # ╠═1a0e2998-8af3-11eb-031b-a3448fd65041
 # ╠═1ecf434a-8af3-11eb-3c49-cb21c6a80bfc
 # ╠═2192c228-8af3-11eb-19d8-81db4f3c0d81
-# ╠═2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
+# ╟─2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
 # ╠═316e5074-8af3-11eb-256b-c5b212f7e0d3
 # ╠═39a85a58-8af3-11eb-1334-6f50ed9acd31
 # ╟─3e83981a-8af3-11eb-3c87-77797adb7e1f
 # ╠═3e1c4090-8af3-11eb-33d0-b9c299fef20d
 # ╠═4be905b4-8af3-11eb-0344-dbdc7e94ddf3
 # ╟─4e8f6cb8-8af3-11eb-1746-9384995d7022
-# ╠═3756754c-8dae-11eb-2d45-b147ded34c10
-# ╠═c5281dee-8dae-11eb-0840-ef40296b7445
-# ╠═e3c25e3c-8db0-11eb-3159-95d419cb13d6
-# ╠═2afacda6-8daf-11eb-105d-07f35cd6caeb
-# ╠═efeb7970-8db0-11eb-1659-bd8f548521e7
-# ╠═83c10aea-8daf-11eb-2efc-7df53139edfb
-# ╠═35825e36-8db1-11eb-0254-999ad38a4aca
-# ╠═7efeaaca-8db5-11eb-12f2-55f2bf127d59
-# ╠═12df3b04-8db5-11eb-2fe1-675c0d8cb771
-# ╠═687aca56-8e7b-11eb-32b8-41ed6cea8f7c
 # ╟─54d2a5b8-8af3-11eb-3273-85d551fceb7b
