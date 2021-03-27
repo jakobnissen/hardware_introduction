@@ -1,10 +1,8 @@
 # What scientists must know about hardware to write fast code
 
-This blog post is hosted on the BioJulia website: https://biojulia.net/post/hardware/
+This document is written as a [Pluto notebook](https://github.com/fonsp/Pluto.jl). If you can, I recommend running the code in a Pluto notebook so you can play around with it and learn. Alternatively, you can read the HTML file in your browser.
 
-This document is written as a [Pluto notebook](https://github.com/fonsp/Pluto.jl). If you can, I recommend running the code in a Pluto notebook so you can play around with it and learn. Alternatively, read it on BioJulia's website.
-
-PR's are welcome.
+PR's (to the notebook file!) are welcome.
 
 ### This notebook covers:
 * Why you must limit your disk read/writes
