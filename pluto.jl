@@ -65,21 +65,6 @@ If you don't already have these packages installed, outcomment these lines and r
 # ╔═╡ 800d827e-8c20-11eb-136a-97a622a7c1e6
 TableOfContents()
 
-# ╔═╡ 88c17a2e-8aef-11eb-2e92-21b458980167
-begin
-	"Return median elapsed time of benchmark"
-	function median_time(trial)
-		time = trial.times[length(trial.times) ÷ 2]
-		BenchmarkTools.prettytime(time)
-	end
-	
-	"Return median elapsed time of benchmark"
-	function mean_time(trial)
-		time = sum(trial.times) / length(trial.times)
-		BenchmarkTools.prettytime(time)
-	end
-end;
-
 # ╔═╡ 9a24985a-8aef-11eb-104a-bd9abf0adc6d
 md"""
 ## The basic structure of computer hardware
@@ -467,13 +452,14 @@ end;
 # ╔═╡ 11c500e8-8ee2-11eb-3291-4382b60c5a2b
 with_terminal() do
 	data = rand(UInt, 2^10)
-	@btime increment($data) seconds=1
-	@btime increment!($data) seconds=1
+	show(stdout, MIME"text/plain"(), @benchmark increment($data) seconds=1)
+	println('\n')
+	show(stdout, MIME"text/plain"(), @benchmark increment!($data) seconds=1)
 end
 
 # ╔═╡ 22512ab2-8af1-11eb-260b-8d6c16762547
 md"""
-On my computer, the allocating function is more than 20x slower on average. This is due to a few properties of the code:
+On my computer, the allocating function is more than 20x slower on average. Also note the high maximum time spend on the allocating function. This is due to a few properties of the code:
 * First, the allocation itself takes time
 * Second, the allocated objects eventually have to be deallocated, also taking time
 * Third, repeated allocations triggers the GC to run, causing overhead
@@ -1372,7 +1358,6 @@ There are also more esoteric chips like TPUs (explicitly designed for low-precis
 # ╟─6532c868-8e7d-11eb-1b6d-23ccfc14e798
 # ╠═675e66aa-8aef-11eb-27be-5fe273e33297
 # ╠═800d827e-8c20-11eb-136a-97a622a7c1e6
-# ╟─88c17a2e-8aef-11eb-2e92-21b458980167
 # ╟─9a24985a-8aef-11eb-104a-bd9abf0adc6d
 # ╟─a2fad250-8aef-11eb-200f-e5f8caa57a67
 # ╠═abb45d6a-8aef-11eb-37a4-7b10847b39b4
