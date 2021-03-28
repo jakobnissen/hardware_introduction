@@ -59,9 +59,6 @@ If you don't already have these packages installed, outcomment these lines and r
 # 	Pkg.add(["BenchmarkTools", "StaticArrays", "PlutoUI"])
 # end
 
-# ╔═╡ 6532c868-8e7d-11eb-1b6d-23ccfc14e798
-
-
 # ╔═╡ 800d827e-8c20-11eb-136a-97a622a7c1e6
 TableOfContents()
 
@@ -1190,7 +1187,7 @@ Modern CPUs are able to adjust their clock speeds according to the CPU temperatu
 As a programmer, there is not much you can do to take CPU temperature into account, but it is good to know. In particular, variations in CPU temperature often explain observed difference in performance:
 
 * CPUs usually work fastest at the beginning of a workload, and then drop in performance as it reaches maximal temperature
-* SIMD instructions usually require more power than ordinary instructions, generating more heat, and lowering the clock frequency. This can offset some performance gains of SIMD, but SIMD will nearly always be more efficient when applicable. One exception is the relatively recent 512-bit SIMD instructions. In current (2021) CPUs, these instructions draw so much power that the resulting clock frequency lowering actually leads to overall performance decrease. This problem will probably be solved in the near future, either by the power draw begin reduced, by consumer chips abandoning 512-bit SIMD, or by compilers refusing to compile to these instructions.
+* SIMD instructions usually require more power than ordinary instructions, generating more heat, and lowering the clock frequency. This can offset some performance gains of SIMD, but SIMD will nearly always be more efficient when applicable. One exception is the relatively recent 512-bit SIMD instructions. In current (2021) CPUs, these instructions draw so much power that the resulting clock frequency lowering actually leads to overall performance decrease for some workloads. This problem will probably be solved in the near future, either by the power draw begin reduced, by consumer chips abandoning 512-bit SIMD, or by compilers refusing to compile to these instructions.
 """
 
 # ╔═╡ 119d269c-8af3-11eb-1fdc-b7ac75b89cf2
@@ -1355,9 +1352,8 @@ There are also more esoteric chips like TPUs (explicitly designed for low-precis
 # ╟─15f5c31a-8aef-11eb-3f19-cf0a4e456e7a
 # ╟─5dd2329a-8aef-11eb-23a9-7f3c325bcf74
 # ╠═7490def0-8aef-11eb-19ce-4b11ce5a9328
-# ╟─6532c868-8e7d-11eb-1b6d-23ccfc14e798
 # ╠═675e66aa-8aef-11eb-27be-5fe273e33297
-# ╠═800d827e-8c20-11eb-136a-97a622a7c1e6
+# ╟─800d827e-8c20-11eb-136a-97a622a7c1e6
 # ╟─9a24985a-8aef-11eb-104a-bd9abf0adc6d
 # ╟─a2fad250-8aef-11eb-200f-e5f8caa57a67
 # ╠═abb45d6a-8aef-11eb-37a4-7b10847b39b4
