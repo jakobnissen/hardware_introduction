@@ -26,13 +26,13 @@ The aim of this tutorial is to give non-professional programmers a *brief* overv
 #### This is not a guide to the Julia programming language
 To write fast code, you must first understand your programming language and its idiosyncrasies. But this is *not* a guide to the Julia programming language. I recommend reading the [performance tips section](https://docs.julialang.org/en/v1/manual/performance-tips/) of the Julia documentation.
 
-#### This is not an explanation of specific datastructures or algorithms
+#### This is not an explanation of specific data structures or algorithms
 Besides knowing your language, you must also know your own code to make it fast. You must understand the idea behind big-O notation, why some algorithms are faster than others, and how different data structures work internally. Without knowing *what an `Array` is*, how could you possibly optimize code making use of arrays?
 
 This too, is outside the scope of this paper. However, I would say that as a minimum, a programmer should have an understanding of:
 
 * How a binary integer is represented in memory
-* How a floating point number is represented in memory (learning this is also necessary to understand computational inacurracies from floating point operations, which is a must when doing scientific programming)
+* How a floating point number is represented in memory (learning this is also necessary to understand computational inaccuracies from floating point operations, which is a must when doing scientific programming)
 * The memory layout of a `String` including ASCII and UTF-8 encoding
 * The basics of how an `Array` is structured, and what the difference between a dense array of e.g. integers and an array of references to objects are
 * The principles behind how a `Dict` (i.e. hash table) and a `Set` works
@@ -50,7 +50,7 @@ To write fast code *in practice*, it is necessary to profile your code to find b
 # ╔═╡ 5dd2329a-8aef-11eb-23a9-7f3c325bcf74
 md"""## Setting up this notebook
 
-If you don't already have these packages installed, outcomment these lines and run them:
+If you don't already have these packages installed, uncomment these lines and run them:
 """
 
 # ╔═╡ 7490def0-8aef-11eb-19ce-4b11ce5a9328
@@ -88,7 +88,7 @@ Naive equation: $$throughput = \frac{1}{latency}$$
 
 In reality, it's not so simple. For example, imagine an operation that has a 1 second "warmup" before it begins, but afterwards completes in 0.1 seconds. The latency is thus 1.1 seconds, but it's throughput after the initial warmup is 10 ops/second.
 
-Or, imagine a situation with an operation with a latency of 1 second, but where 8 operations can be run concurrently. In bulk, these operation can be run with a throughput of 8 ops/second.
+Or, imagine a situation with an operation with a latency of 1 second, but where 8 operations can be run concurrently. In bulk, these operations can be run with a throughput of 8 ops/second.
 
 Once place where it's useful to distinguish between latency and throughput is when programs read from the disk. Most modern computers use a type of disk called a *solid state drive (SSD)*. In round numbers, current (2021) SSD's have latencies around 100 µs, and read/write throughputs of well over 1 GB/s. Older, or cheaper mass-storage disks are of the *hard disk drive (HDD)* type. These have latencies 100 times larger, at near 10 ms, and 10 times lower throughput of 100 MB/s.
 
@@ -134,7 +134,7 @@ Benchmarking this is a little tricky, because the *first* invokation will includ
 
 $$[CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
-On my computer, finding a single byte in a file (including opening and closing the file) takes about 743 µs, and accessing 1,000,000 integers from memory takes 213 miliseconds. So RAM latency is on the order of 3,000 times lower than disk's. Therefore, this, repeated access to files *msut* be avoided in high performance computing.
+On my computer, finding a single byte in a file (including opening and closing the file) takes about 743 µs, and accessing 1,000,000 integers from memory takes 213 milliseconds. So RAM latency is on the order of 3,000 times lower than disk's. Therefore, this, repeated access to files *must* be avoided in high performance computing.
 
 Only a few years back, SSDs were uncommon and HDD throughput was lower than today. Therefore, old texts will often warn people not to have your program depend on the disk at all for high throughput. That advice is mostly outdated today, as most programs are incapable of bottlenecking at the throughput of even cheap, modern SSDs of 1 GB/s. The advice today still stands only for programs that need *frequent* individual reads/writes to disk, where the high *latency* accumulates. In these situations, you should indeed keep your data in RAM.
 
@@ -145,7 +145,7 @@ The worst case for performance is if you need to read/write a large file in tiny
 # ╔═╡ f58d428c-8aef-11eb-3127-89d729e23823
 md"""
 ## Avoid cache misses
-The RAM is faster than the disk, and the CPU in turn is faster than RAM. A CPU ticks like a clock, with a speed of about 3 GHz, i.e. 3 billion ticks per second. One "tick" of this clock is called a *clock cycle*. While this is a simplification, you may imagine that every cycle, the CPU executes a single, simple command called a *CPU instruction* which does one operation on a small piece of data. The clock speed then can serve as a reference for other timings in a computer. It is worth realizing just how quick a clock cycle is: In one cycle, a photon will travel only around 10 cm. In fact, modern CPUs are so fast that a significant contraint on their physical layout is that one must take into account the the time needed for electricity to move through the wires inside them, so called wire delays.
+The RAM is faster than the disk, and the CPU in turn is faster than RAM. A CPU ticks like a clock, with a speed of about 3 GHz, i.e. 3 billion ticks per second. One "tick" of this clock is called a *clock cycle*. While this is a simplification, you may imagine that every cycle, the CPU executes a single, simple command called a *CPU instruction* which does one operation on a small piece of data. The clock speed then can serve as a reference for other timings in a computer. It is worth realizing just how quick a clock cycle is: In one cycle, a photon will travel only around 10 cm. In fact, modern CPUs are so fast that a significant constraint on their physical layout is that one must take into account the time needed for electricity to move through the wires inside them, so called wire delays.
 
 On this scale, reading from RAM takes around 500 clock cycles. Similarly to how the high latency of disks can be mitigated by copying data to the faster RAM, data from RAM is copied to a smaller memory chip physically on the CPU, called a *cache*. The cache is faster because it is physically on the CPU chip (reducing wire delays), and because it uses a faster type of storage, static RAM, instead of the slower (but cheaper to manufacture) dynamic RAM which is what the main RAM is made of. Because the cache must be placed on the CPU, limiting its size, and because it is more expensive to produce, a typical CPU cache only contains around $10^8$ bits, around 1000 times less than RAM. There are actually multiple layers of CPU cache, but here we simplify it and just refer to "the cache" as one single thing:
 
@@ -163,7 +163,7 @@ Effective use of the cache comes down to *locality*, temporal and spacial locali
 
 To illustrate this, let's compare the performance of the `random_access` function above when it's run on a short (8 KiB) vector, compared to a long (16 MiB) one. The first one is small enough that after just a few accessions, all the data has been copied to cache. The second is so large that new indexing causes cache misses most of the time. 
 
-Notice the large discrepency in time spent - a difference of around 70x.
+Notice the large discrepancy in time spent - a difference of around 70x.
 """
 
 # ╔═╡ b73605ca-8ee4-11eb-1a0d-bb6678de91c6
@@ -207,7 +207,7 @@ Surprise! The linear access pattern is more than 20 times faster! How can that b
 
 Next to the cache of the CPU lies a small circuit called the *prefetcher*. This electronic circuit collects data on which memory is being accessed by the CPU, and looks for patterns. When it detects a pattern, it will *prefetch* whatever data it predicts will soon be accessed, so that it already resides in cache when the CPU requests the data.
 
-Our function `linear_access`, depite having worse *cache usage* than *random_access*, fetched the data in a completely predicatable pattern, which allowed the prefetcher to do its job.
+Our function `linear_access`, depite having worse *cache usage* than *random_access*, fetched the data in a completely predictable pattern, which allowed the prefetcher to do its job.
 
 In summary, we have seen that
 * A *cache miss* incurs a penalty equivalent to roughly 500 CPU operations, so is absolutely critical for performance to avoid these
