@@ -90,9 +90,9 @@ In reality, it's not so simple. For example, imagine an operation that has a 1 s
 
 Or, imagine a situation with an operation with a latency of 1 second, but where 8 operations can be run concurrently. In bulk, these operations can be run with a throughput of 8 ops/second.
 
-Once place where it's useful to distinguish between latency and throughput is when programs read from the disk. Most modern computers use a type of disk called a *solid state drive (SSD)*. In round numbers, current (2021) SSD's have latencies around 100 µs, and read/write throughputs of well over 1 GB/s. Older, or cheaper mass-storage disks are of the *hard disk drive (HDD)* type. These have latencies 100 times larger, at near 10 ms, and 10 times lower throughput of 100 MB/s.
+One place where it's useful to distinguish between latency and throughput is when programs read from the disk. Most modern computers use a type of disk called a *solid state drive (SSD)*. In round numbers, current (2021) SSD's have latencies around 100 µs, and read/write throughputs of well over 1 GB/s. Older, or cheaper mass-storage disks are of the *hard disk drive (HDD)* type. These have latencies 100 times larger, at near 10 ms, and 10 times lower throughput of 100 MB/s.
 
-Even the latest, fastest SSDs has latencies thousands of times slower than RAM, whose latency is below 100 nanoseconds. Disk latency is incurred whenever a read or write happen. To write fast code, you must therefore at all costs avoid repeatedly reading to, or writing from disk.
+Even the latest, fastest SSDs has latencies thousands of times slower than RAM, whose latency is below 100 nanoseconds. Disk latency is incurred whenever a read or write happen. To write fast code, you must therefore at all costs avoid repeatedly reading from, or writing to disk.
 
 The following example serves to illustrate the difference in latency: The first function opens a file, accesses one byte from the file, and closes it again. The second function randomly accesses 1,000,000 integers from RAM.
 """
@@ -130,7 +130,7 @@ end
 
 # ╔═╡ cdde6fe8-8aef-11eb-0a3c-77e28f7a2c09
 md"""
-Benchmarking this is a little tricky, because the *first* invokation will include the compilation times of both functions. And in the *second* invokation, your operating system will have stored a copy of the file (or *cached* the file) in RAM, making the file seek almost instant. To time it properly, run it once, then *change the file* to another not-recently-opeded file, and run it again. So in fact, we should update our computer diagram:
+Benchmarking this is a little tricky, because the *first* invocation will include the compilation times of both functions. And in the *second* invocation, your operating system will have stored a copy of the file (or *cached* the file) in RAM, making the file seek almost instant. To time it properly, run it once, then *change the file* to another not-recently-opened file, and run it again. So in fact, we should update our computer diagram:
 
 $$[CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
@@ -191,7 +191,7 @@ end;
 
 # ╔═╡ d4c67b82-8c1a-11eb-302f-b79c86412ce5
 md"""
-`linear_access` do nearly the same computation as `random_access`, but accesses every 15th element. An `UInt` in Julia is 8 bytes (64 bits), so a step size of 15 means there are $15 * 64 = 960$ bits between each element; larger than the 64 byte cache line. That means *every single* access will cause a cache miss - in contrast to `random_access` with a large vector, where only *most* accesses forces cache misses.
+`linear_access` does nearly the same computation as `random_access`, but accesses every 15th element. An `UInt` in Julia is 8 bytes (64 bits), so a step size of 15 means there are $15 * 64 = 960$ bits between each element; larger than the 64 byte cache line. That means *every single* access will cause a cache miss - in contrast to `random_access` with a large vector, where only *most* accesses forces cache misses.
 """
 
 # ╔═╡ e71e4798-8ee4-11eb-3ea2-fdbbcdcf7410
@@ -256,7 +256,7 @@ with_terminal() do
 end
 
 # ╔═╡ 3a1efd5a-8af0-11eb-21a2-d1011f16555c
-md"The consequences of unaligned memory access is very CPU-dependent. On my current CPU, I see a ~15% performance decrease. On my old computer where I originally wrote this notebook, the penalty was around 100%. Old processors can do [even worse things](https://www.kernel.org/doc/Documentation/unaligned-memory-access.txt) - incredibly, the CPU inside the Game Boy Advance from 2001 would _silently perform a different read!_ 😱
+md"The consequences of unaligned memory access are very CPU-dependent. On my current CPU, I see a ~15% performance decrease. On my old computer where I originally wrote this notebook, the penalty was around 100%. Old processors can do [even worse things](https://www.kernel.org/doc/Documentation/unaligned-memory-access.txt) - incredibly, the CPU inside the Game Boy Advance from 2001 would _silently perform a different read!_ 😱
 
 Fortunately, the compiler does a few tricks to make it less likely that you will access misaligned data. First, Julia (and other compiled languages) always places new objects in memory at the boundaries of cache lines. When an object is placed right at the boundary, we say that it is *aligned*. Julia also aligns the beginning of larger arrays:"
 
@@ -298,7 +298,7 @@ We can see that, despite an `AlignmentTest` only having 4 + 2 + 1 = 7 bytes of a
 
 As a coder, there are only a few situations where you can face alignment issues. I can come up with two:
 
-1. If you manually create object with a strange size, e.g. by accessing a dense integer array with pointers. This can save memory, but will waste time. [My implementation of a Cuckoo filter](https://github.com/jakobnissen/Probably.jl) does this to save space.
+1. If you manually create an object with a strange size, e.g. by accessing a dense integer array with pointers. This can save memory, but will waste time. [My implementation of a Cuckoo filter](https://github.com/jakobnissen/Probably.jl) does this to save space.
 2. During matrix operations. If you have a matrix the columns are sometimes unaligned because it is stored densely in memory. E.g. in a 15x15 matrix of `Float32`s, only the first column is aligned, all the others are not. This can have serious effects when doing matrix operations: [I've seen benchmarks](https://chriselrod.github.io/LoopVectorization.jl/latest/examples/matrix_vector_ops/) where an 80x80 matrix/vector multiplication is 2x faster than a 79x79 one due to alignment issues.
 """
 
@@ -407,7 +407,7 @@ with_terminal(() -> @code_native debuginfo=:none divide_slow(UInt(1)))
 
 # ╔═╡ d70c56bc-8af0-11eb-1220-09e78dba26f7
 md"## Allocations and immutability
-As already mentioned, main RAM is much slower than the CPU cache. However, working in main RAM comes with an additional disadvantage: Your operating system (OS) keeps track of which process have access to which memory. If every process had access to all memory, then it would be trivially easy to make a program that scans your RAM for secret data such as bank passwords - or for one program to accidentally overwrite the memory of another program. Instead, every process is allocated a bunch of memory by the OS, and is only allowed to read or write to the allocated data.
+As already mentioned, main RAM is much slower than the CPU cache. However, working in main RAM comes with an additional disadvantage: Your operating system (OS) keeps track of which processes have access to which memory. If every process had access to all memory, then it would be trivially easy to make a program that scans your RAM for secret data such as bank passwords - or for one program to accidentally overwrite the memory of another program. Instead, every process is allocated a bunch of memory by the OS, and is only allowed to read or write to the allocated data.
 
 The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Memory that is not kept track of will eventually be overwritten by other data. Allocation and deallocation take a significant amount of time depending on the size of objects, from a few tens of nanoseconds to a few microseconds per allocation.
 
@@ -464,7 +464,7 @@ On my computer, the allocating function is more than 20x slower on average. Also
 
 Note that I used the mean time instead of the median, since for this function the GC only triggers approximately every 30'th call, but it consumes 30-40 µs when it does. All this means performant code should keep allocations to a minimum.
 
-The `@btime` macro, and other benchmarking tools, tells you the number of allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will be interested in reducing allocations.
+The `@btime` macro, and other benchmarking tools, tell you the number of allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will be interested in reducing allocations.
 
 #### Not all objects need to be allocated
 Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a simple data structure with a beginning and end, similar to a `Vector` in Julia. The stack can only be modified by adding or subtracting elements from the end, analogous to a `Vector` with only the two mutating operations `push!` and `pop!`. These operations on the stack are very fast. When we talk about "allocations", however, we talk about data on the heap. Unlike the stack, the heap has an unlimited size (well, it has the size of your computer's RAM), and can be modified arbitrarily, deleting and accessing any objects. You can think of the stack like a `Vector`, and the heap like a `Dict`.
@@ -478,9 +478,9 @@ Why do some objects need to be heap allocated, while others can be stack allocat
 
 Julia has even more constrains on stack-allocated objects.
 * The object should have a fixed size known at compile time.
-* The compiler must know that object never changes. The CPU is free to copy stack-allocated objects, and for immutable objects, there is no way to distinguish a copy from the original. This bears repeating: *With immutable objects, there is no way to distinguish a copy from the original*. This gives the compiler and the CPU certain freedoms when operating on it. The latter point is also why objects are immutable by default in Julia, and leads to one other performance tip: Use immutable objects whereever possible.
+* The compiler must know that object never changes. The CPU is free to copy stack-allocated objects, and for immutable objects, there is no way to distinguish a copy from the original. This bears repeating: *With immutable objects, there is no way to distinguish a copy from the original*. This gives the compiler and the CPU certain freedoms when operating on it. The latter point is also why objects are immutable by default in Julia, and leads to one other performance tip: Use immutable objects wherever possible.
 
-What does this mean in practise? In Julia, it means if you want fast stack-allocated objects:
+What does this mean in practice? In Julia, it means if you want fast stack-allocated objects:
 * Your object must be created, used and destroyed in a fully compiled function so the compiler knows for certain when it needs to create, use and destroy the object. If the object is returned for later use (and not immediately returned to another, fully compiled function), we say that the object *escapes*, and must be allocated.
 * Your type must be limited in size. I don't know exactly how large it has to be, but 100 bytes is fine.
 * The exact memory layout of your type must be known by the compiler (it nearly always is).
@@ -569,9 +569,9 @@ To operate on data structures larger than one register, the data must be broken 
 with_terminal(() -> @code_native UInt128(5) + UInt128(11))
 
 # ╔═╡ 7d3fcbd6-8af1-11eb-0441-2f88a9d59966
-md"""There is no register that can do 128-bit additions. First the lower 64 bits must be added using a `addq` instruction, fitting in a register. Then the upper bits are added with a `adcxq` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
+md"""There is no register that can do 128-bit additions. First the lower 64 bits must be added using a `addq` instruction, fitting in a register. Then the upper bits are added with a `adcq` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
 
-The small size of the registers serves as a bottleneck for CPU throughput: It can only operate on one integer/float at a time. In order to sidestep this, modern CPUs contain specialized 256-bit registers (or 128-bit in older CPUs, or 512-bit in the brand new ones) than can hold 4 64-bit integers/floats at once, or 8 32-bit integers, etc. Confusingly, the data in such wide registers are termed "vectors". The CPU have access to instructions that can perform various CPU operations on vectors, operating on 4 64-bit integers in one instruction. This is called "single instruction, multiple data", *SIMD*, or *vectorization*. Notably, a 4x64 bit operation is *not* the same as a 256-bit operation, e.g. there is no carry-over with between the 4 64-bit integers when you add two vectors. Instead, a 256-bit vector operation is equivalent to 4 individual 64-bit operations.
+The small size of the registers serves as a bottleneck for CPU throughput: It can only operate on one integer/float at a time. In order to sidestep this, modern CPUs contain specialized 256-bit registers (or 128-bit in older CPUs, or 512-bit in the brand new ones) than can hold 4 64-bit integers/floats at once, or 8 32-bit integers, etc. Confusingly, the data in such wide registers are termed "vectors." The CPU have access to instructions that can perform various CPU operations on vectors, operating on 4 64-bit integers in one instruction. This is called "single instruction, multiple data," *SIMD*, or *vectorization*. Notably, a 4x64 bit operation is *not* the same as a 256-bit operation, e.g. there is no carry-over with between the 4 64-bit integers when you add two vectors. Instead, a 256-bit vector operation is equivalent to 4 individual 64-bit operations.
 
 We can illustrate this with the following example:"""
 
@@ -592,7 +592,7 @@ It's worth mentioning the interaction between SIMD and alignment: If a series of
 SIMD vectorization of e.g. 64-bit integers may increase throughput by almost 4x, so it is of huge importance in high-performance programming. Compilers will automatically vectorize operations if they can. What can prevent this automatic vectorization?
 
 #### SIMD needs uninterrupted iteration of fixed length
-Because vectorized operations operates on multiple data at once, it is not possible to interrupt the loop at an arbitrary point. For example, if 4 64-bit integers are processed in one clock cycle, it is not possible to stop a SIMD loop after 3 integers have been processed. Suppose you had a loop like this:
+Because vectorized operations operate on multiple data at once, it is not possible to interrupt the loop at an arbitrary point. For example, if 4 64-bit integers are processed in one clock cycle, it is not possible to stop a SIMD loop after 3 integers have been processed. Suppose you had a loop like this:
 
 ```julia
 for i in 1:8
@@ -710,7 +710,7 @@ If we create an array containing four `AlignmentTest` objects `A`, `B`, `C` and 
 Note again that byte no. 8, 16, 24 and 32 are empty to preserve alignment, wasting memory.
 Now suppose you want to do an operation on all the `.a` fields of the structs. Because the `.a` fields are scattered 8 bytes apart, SIMD operations are much less efficient (loading up to 4 fields at a time) than if all the `.a` fields were stored together (where 8 fields could fit in a 256-bit register). When working with the `.a` fields only, the entire 64-byte cache lines would be read in, of which only half, or 32 bytes would be useful. Not only does this cause more cache misses, we also need instructions to pick out the half of the data from the SIMD registers we need.
 
-The memory structure we have above is termed an "array of structs", because, well, it is an array filled with structs. Instead we can strucure our 4 objects `A` to `D` as a "struct of arrays". Conceptually, it could look like:
+The memory structure we have above is termed an "array of structs," because, well, it is an array filled with structs. Instead we can strucure our 4 objects `A` to `D` as a "struct of arrays." Conceptually, it could look like:
 """
 
 # ╔═╡ fc2d2f1a-8af1-11eb-11a4-8700f94e866e
@@ -1127,7 +1127,7 @@ The branch-ful executes 9 instructions per iteration (remember, all iterations h
 
 To understand what is happening, we need to go a little deeper into the CPU. In fact, the CPU does not execute CPU instructions in a linear fashion as the assembly code would have you believe. Instead, a more accurate (but still simplified) picture is the following:
 
-1. The CPU reads in CPU instructions. It then on-the-fly translates these CPU instructions to a set of even lower-level instructions called _micro-operations_ or _µops_. The important difference between µops and CPU instructions is that while only a few different registers can be referred to by the instructions, the actual processor has many more registers, which can be adressed by µops. Code written with µops is called _microcode_.
+1. The CPU reads in CPU instructions. It then on-the-fly translates these CPU instructions to a set of even lower-level instructions called _micro-operations_ or _µops_. The important difference between µops and CPU instructions is that while only a few different registers can be referred to by the instructions, the actual processor has many more registers, which can be addressed by µops. Code written with µops is called _microcode_.
 
 2. This microcode is loaded into an internal array called the *reorder buffer* for storage. A CPU may hold more than 200 instructions in the reorder buffer at a time. The purpose of this storage is to allow execution of microcode in a highly parallel way. The code is then sent to execution in bulk.
 
