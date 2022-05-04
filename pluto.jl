@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.15.1
+# v0.19.3
 
 using Markdown
 using InteractiveUtils
@@ -97,37 +97,6 @@ Even the latest, fastest SSDs has latencies thousands of times slower than RAM, 
 The following example serves to illustrate the difference in latency: The first function opens a file, accesses one byte from the file, and closes it again. The second function randomly accesses 1,000,000 integers from RAM.
 """
 
-# ╔═╡ abb45d6a-8aef-11eb-37a4-7b10847b39b4
-begin
-	# Open a file
-	function test_file(path)
-		open(path) do file
-			# Go to 1000'th byte of file and read it
-			seek(file, 1000)
-			read(file, UInt8)
-		end
-	end
-
-	# Randomly access data N times
-	function random_access(data::Vector{UInt}, N::Integer)
-		n = rand(UInt)
-		mask = length(data) - 1
-		@inbounds for i in 1:N
-			n = (n >>> 7) ⊻ data[n & mask + 1]
-		end
-		return n
-	end
-end;
-
-# ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
-let
-	data = rand(UInt, 2^24)
-	with_terminal() do
-		@time test_file("../alen/LICENSE")
-		@time random_access(data, 1000000);
-	end
-end
-
 # ╔═╡ cdde6fe8-8aef-11eb-0a3c-77e28f7a2c09
 md"""
 Benchmarking this is a little tricky, because the *first* invocation will include the compilation times of both functions. And in the *second* invocation, your operating system will have stored a copy of the file (or *cached* the file) in RAM, making the file seek almost instant. To time it properly, run it once, then *change the file* to another not-recently-opened file, and run it again. So in fact, we should update our computer diagram:
@@ -166,12 +135,6 @@ To illustrate this, let's compare the performance of the `random_access` functio
 Notice the large discrepancy in time spent - a difference of around 70x.
 """
 
-# ╔═╡ b73605ca-8ee4-11eb-1a0d-bb6678de91c6
-with_terminal() do
-	@btime random_access($(rand(UInt, 1024)), 2^20) seconds=1
-	@btime random_access($(rand(UInt, 2^24)), 2^20) seconds=1
-end
-
 # ╔═╡ c6da4248-8c19-11eb-1c16-093695add9a9
 md"""
 We can play around with the function `random_access` from before. What happens if, instead of accessing the array randomly, we access it *in the worst possible order*?
@@ -179,27 +142,10 @@ We can play around with the function `random_access` from before. What happens i
 For example, we could use the following function:
 """
 
-# ╔═╡ ffca4c72-8aef-11eb-07ac-6d5c58715a71
-function linear_access(data::Vector{UInt}, N::Integer)
-    n = rand(UInt)
-    mask = length(data) - 1
-    for i in 1:N
-        n = (n >>> 7) ⊻ data[(15 * i) & mask + 1]
-    end
-    return n
-end;
-
 # ╔═╡ d4c67b82-8c1a-11eb-302f-b79c86412ce5
 md"""
 `linear_access` does nearly the same computation as `random_access`, but accesses every 15th element. An `UInt` in Julia is 8 bytes (64 bits), so a step size of 15 means there are $15 * 64 = 960$ bits between each element; larger than the 64 byte cache line. That means *every single* access will cause a cache miss - in contrast to `random_access` with a large vector, where only *most* accesses forces cache misses.
 """
-
-# ╔═╡ e71e4798-8ee4-11eb-3ea2-fdbbcdcf7410
-with_terminal() do
-	data = rand(UInt, 2^24)
-	@btime random_access($data, 2^20) seconds=1
-	@btime linear_access($data, 2^20) seconds=1
-end
 
 # ╔═╡ 0f2ac53c-8c1b-11eb-3841-27f4ea1e9617
 md"""
@@ -232,39 +178,10 @@ This means that some data structures can straddle the boundaries between cache l
 The time wasted can be significant. In a situation where in-cache memory access proves the bottleneck, the slowdown can approach 2x. In the following example, I use a pointer to repeatedly access an array at a given offset from a cache line boundary. If the offset is in the range `0:56`, the integers all fit within one single cache line, and the function is fast. If the offset is in `57:63` all integers will straddle cache lines.
 """
 
-# ╔═╡ 18e8e4b6-8af0-11eb-2f17-2726f162e9b0
-function alignment_test(data::Vector{UInt}, offset::Integer)
-    # Jump randomly around the memory.
-    n = rand(UInt)
-    mask = (length(data) - 9) ⊻ 7
-    GC.@preserve data begin # protect the array from moving in memory
-        ptr = pointer(data)
-        iszero(UInt(ptr) & 63) || error("Array not aligned")
-        ptr += (offset & 63)
-        for i in 1:4096
-            n = (n >>> 7) ⊻ unsafe_load(ptr, (n & mask + 1) % Int)
-        end
-    end
-    return n
-end;
-
-# ╔═╡ 1f38f8c6-8ee5-11eb-1c01-f3706534a9cf
-with_terminal() do
-	data = rand(UInt, 256 + 8)
-	@btime alignment_test($data, 0) seconds=1
-	@btime alignment_test($data, 60) seconds=1
-end
-
 # ╔═╡ 3a1efd5a-8af0-11eb-21a2-d1011f16555c
 md"The consequences of unaligned memory access are very CPU-dependent. On my current CPU, I see a ~15% performance decrease. On my old computer where I originally wrote this notebook, the penalty was around 100%. Old processors can do [even worse things](https://www.kernel.org/doc/Documentation/unaligned-memory-access.txt) - incredibly, the CPU inside the Game Boy Advance from 2001 would _silently perform a different read!_ 😱
 
 Fortunately, the compiler does a few tricks to make it less likely that you will access misaligned data. First, Julia (and other compiled languages) always places new objects in memory at the boundaries of cache lines. When an object is placed right at the boundary, we say that it is *aligned*. Julia also aligns the beginning of larger arrays:"
-
-# ╔═╡ 3fae31a0-8af0-11eb-1ea8-7980e7875039
-let
-	memory_address = reinterpret(UInt, pointer(rand(1024)))
-	@assert iszero(memory_address % 64) # should not error!
-end
 
 # ╔═╡ 5b10a2b6-8af0-11eb-3fe7-4b78b4c22550
 md"Note that if the beginning of an array is aligned, then it's not possible for 1-, 2-, 4-, or 8-byte objects to straddle cache line boundaries, and everything will be aligned.
@@ -276,13 +193,13 @@ struct AlignmentTest
     a::UInt32 # 4 bytes +
     b::UInt16 # 2 bytes +
     c::UInt8  # 1 byte = 7 bytes?
-end
+end;
 
 # ╔═╡ 624eae74-8af0-11eb-025b-8b68dc55f31e
 md"Then we can use Julia's introspection to get the relative position of each of the three integers in an `AlignmentTest` object in memory:"
 
 # ╔═╡ d4c8c38c-8ee6-11eb-0b49-33fbfbd214f3
-with_terminal() do
+let
 	T = AlignmentTest
 	println("Size of $T: ", sizeof(T), "bytes")
 	for fieldno in 1:fieldcount(T)
@@ -323,7 +240,7 @@ function foo(x)
 end;
 
 # ╔═╡ a74a9966-8af0-11eb-350f-6787d2759eba
-with_terminal(() -> @code_native foo([UInt(1)]))
+ @code_native foo([UInt(1)])
 
 # ╔═╡ ae9ee028-8af0-11eb-10c0-6f2db3ab8025
 md"""
@@ -403,7 +320,7 @@ md"However, modern compilers are pretty clever, and will often figure out the op
 
 # ╔═╡ d376016a-8af0-11eb-3a15-4322759143d1
 # Calling it with debuginfo=:none removes the comments in the assembly code
-with_terminal(() -> @code_native debuginfo=:none divide_slow(UInt(1)))
+@code_native debuginfo=:none divide_slow(UInt(1))
 
 # ╔═╡ d70c56bc-8af0-11eb-1220-09e78dba26f7
 md"## Allocations and immutability
@@ -445,14 +362,6 @@ begin
 		return x
 	end
 end;
-
-# ╔═╡ 11c500e8-8ee2-11eb-3291-4382b60c5a2b
-with_terminal() do
-	data = rand(UInt, 2^10)
-	show(stdout, MIME"text/plain"(), @benchmark increment($data) seconds=1)
-	println('\n')
-	show(stdout, MIME"text/plain"(), @benchmark increment!($data) seconds=1)
-end
 
 # ╔═╡ 22512ab2-8af1-11eb-260b-8d6c16762547
 md"""
@@ -505,57 +414,21 @@ end
 md"We can inspect the code needed to instantiate a `HeapAllocated` object with the code needed to instantiate a `StackAllocated` one:"
 
 # ╔═╡ 33350038-8af1-11eb-1ff5-6d42d86491a3
-with_terminal(() -> @code_native HeapAllocated(1))
+@code_native HeapAllocated(1)
 
 # ╔═╡ 3713a8da-8af1-11eb-2cb2-1957455227d0
 md"Notice the `callq` instruction in the `HeapAllocated` one. This instruction calls out to other functions, meaning that in fact, much more code is really needed to create a `HeapAllocated` object that what is displayed. In constrast, the `StackAllocated` really only needs a few instructions:"
 
 # ╔═╡ 59f58f1c-8af1-11eb-2e88-997e9d4bcc48
-with_terminal(() -> @code_native StackAllocated(1))
+@code_native StackAllocated(1)
 
 # ╔═╡ 5c86e276-8af1-11eb-2b2e-3386e6795f37
 md"
 Because immutable objects dont need to be stored on the heap and can be copied freely, immutables are stored *inline* in arrays. This means that immutable objects can be stored directly inside the array's memory. Mutable objects have a unique identity and location on the heap. They are distinguishable from copies, so cannot be freely copied, and so arrays contain reference to the memory location on the heap where they are stored. Accessing such an object from an array then means first accessing the array to get the memory location, and then accessing the object itself using that memory location. Beside the double memory access, objects are stored less efficiently on the heap, meaning that more memory needs to be copied to CPU caches, meaning more cache misses. Hence, even when stored on the heap in an array, immutables can be stored more effectively.
 "
 
-# ╔═╡ 61ee9ace-8af1-11eb-34bd-c5af962c8d82
-let
-	Base.:+(x::Int, y::AllocatedInteger) = x + y.x
-	Base.:+(x::AllocatedInteger, y::AllocatedInteger) = x.x + y.x
-
-	data_stack = [StackAllocated(i) for i in rand(UInt16, 1000000)]
-	data_heap = [HeapAllocated(i.x) for i in data_stack]
-	
-	with_terminal() do
-		@btime sum($data_stack) seconds=1
-		@btime sum($data_heap) seconds=1
-	end
-end
-
 # ╔═╡ 6849d9ec-8af1-11eb-06d6-db49af4796bc
 md"We can verify that, indeed, the array in the `data_stack` stores the actual data of a `StackAllocated` object, whereas the `data_heap` contains pointers (i.e. memory addresses):"
-
-# ╔═╡ 6ba266f4-8af1-11eb-10a3-3daf6e473142
-with_terminal() do
-	data_stack = [StackAllocated(i) for i in rand(UInt16, 1)]
-	data_heap = [HeapAllocated(i.x) for i in data_stack]
-	
-	println(rpad("First object of data_stack:", 36), data_stack[1])
-	println(
-		rpad("First data in data_stack array:", 36),
-		unsafe_load(pointer(data_stack)),
-		'\n'
-	)
-	
-	println(rpad("First object of data_heap:", 36), data_heap[1])
-	first_data = unsafe_load(Ptr{UInt}(pointer(data_heap)))
-	println(rpad("First data in data_heap array:", 36), repr(first_data))
-	println(
-		"Data at address ",
-		repr(first_data), ": ",
-		unsafe_load(Ptr{HeapAllocated}(first_data))
-	)
-end
 
 # ╔═╡ 74a3ddb4-8af1-11eb-186e-4d80402adfcf
 md"## Registers and SIMD
@@ -566,7 +439,7 @@ $$[CPU] ↔ [REGISTERS] ↔ [CACHE] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 To operate on data structures larger than one register, the data must be broken up into smaller pieces that fits inside the register. For example, when adding two 128-bit integers on my computer:"
 
 # ╔═╡ 7a88c4ba-8af1-11eb-242c-a1813a9e6741
-with_terminal(() -> @code_native UInt128(5) + UInt128(11))
+@code_native UInt128(5) + UInt128(11)
 
 # ╔═╡ 7d3fcbd6-8af1-11eb-0441-2f88a9d59966
 md"""There is no register that can do 128-bit additions. First the lower 64 bits must be added using a `addq` instruction, fitting in a register. Then the upper bits are added with a `adcq` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
@@ -576,11 +449,12 @@ The small size of the registers serves as a bottleneck for CPU throughput: It ca
 We can illustrate this with the following example:"""
 
 # ╔═╡ 84c0d56a-8af1-11eb-30f3-d137b377c31f
-with_terminal() do
+let
 	# Create a single statically-sized vector of 8 32-bit integers
 	# I could also have created 4 64-bit ones, etc.
 	a = @SVector Int32[1,2,3,4,5,6,7,8]
 	@code_native debuginfo=:none a + a
+	nothing
 end
 
 # ╔═╡ 8c2ed15a-8af1-11eb-2e96-1df34510e773
@@ -631,14 +505,6 @@ begin
 	end
 end;
 
-# ╔═╡ a0286cdc-8af1-11eb-050e-072acdd4f0a0
-with_terminal() do
-	# Make sure the vector is small so we don't time cache misses
-	data = rand(UInt64, 4096)
-	@btime sum_boundscheck($data) seconds=1
-	@btime sum_inbounds($data) seconds=1
-end
-
 # ╔═╡ aa3931fc-8af1-11eb-2f42-f582b8e639ad
 md"""
 On my computer, the SIMD code is 10x faster than the non-SIMD code. SIMD alone accounts for only about 4x improvements (since we moved from 64-bits per iteration to 256 bits per iteration). The rest of the gain comes from not spending time checking the bounds and from automatic loop unrolling (explained later), which is also made possible by the `@inbounds` annotation.
@@ -666,13 +532,6 @@ end
 # ╔═╡ c80e05ba-8af1-11eb-20fc-235b45f2eb4b
 md"for this reason, float addition will not auto-vectorize:"
 
-# ╔═╡ cc99d9ce-8af1-11eb-12ec-fbd6df3becc8
-with_terminal() do
-	data = rand(Float64, 4096)
-	@btime sum_boundscheck($data) seconds=1
-	@btime sum_inbounds($data) seconds=1
-end
-
 # ╔═╡ e3931226-8af1-11eb-0da5-fb3c1c22d12e
 md"However, high-performance programming languages usually provide a command to tell the compiler it's alright to re-order the loop, even for non-associative loops. In Julia, this command is the `@simd` macro:"
 
@@ -685,13 +544,6 @@ function sum_simd(x::Vector)
     end
     return n
 end;
-
-# ╔═╡ e8d2ec8e-8af1-11eb-2018-1fa4df5b47ad
-with_terminal() do
-	data = rand(Float64, 4096)
-	@btime sum_inbounds($data) seconds=1
-	@btime sum_simd($data) seconds=1
-end
 
 # ╔═╡ f0a4cb58-8af1-11eb-054c-03192285b5e2
 md"""
@@ -737,8 +589,161 @@ function Base.rand(::Type{AlignmentTest})
 	AlignmentTest(rand(UInt32), rand(UInt16), rand(UInt8))
 end;
 
+# ╔═╡ abb45d6a-8aef-11eb-37a4-7b10847b39b4
+begin
+	# Open a file
+	function test_file(path)
+		open(path) do file
+			# Go to 1000'th byte of file and read it
+			seek(file, 1000)
+			read(file, UInt8)
+		end
+	end
+
+	# Randomly access data N times
+	function random_access(data::Vector{UInt}, N::Integer)
+		n = rand(UInt)
+		mask = length(data) - 1
+		@inbounds for i in 1:N
+			n = (n >>> 7) ⊻ data[n & mask + 1]
+		end
+		return n
+	end
+end;
+
+# ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
+let
+	data = rand(UInt, 2^24)
+	@time test_file("../alen/LICENSE")
+	@time random_access(data, 1000000)
+	nothing
+end
+
+# ╔═╡ b73605ca-8ee4-11eb-1a0d-bb6678de91c6
+begin
+	@btime random_access($(rand(UInt, 1024)), 2^20) seconds=1
+	@btime random_access($(rand(UInt, 2^24)), 2^20) seconds=1
+	nothing
+end
+
+# ╔═╡ ffca4c72-8aef-11eb-07ac-6d5c58715a71
+function linear_access(data::Vector{UInt}, N::Integer)
+    n = rand(UInt)
+    mask = length(data) - 1
+    for i in 1:N
+        n = (n >>> 7) ⊻ data[(15 * i) & mask + 1]
+    end
+    return n
+end;
+
+# ╔═╡ e71e4798-8ee4-11eb-3ea2-fdbbcdcf7410
+let
+	data = rand(UInt, 2^24)
+	@btime random_access($data, 2^20) seconds=1
+	@btime linear_access($data, 2^20) seconds=1
+	nothing
+end
+
+# ╔═╡ 18e8e4b6-8af0-11eb-2f17-2726f162e9b0
+function alignment_test(data::Vector{UInt}, offset::Integer)
+    # Jump randomly around the memory.
+    n = rand(UInt)
+    mask = (length(data) - 9) ⊻ 7
+    GC.@preserve data begin # protect the array from moving in memory
+        ptr = pointer(data)
+        iszero(UInt(ptr) & 63) || error("Array not aligned")
+        ptr += (offset & 63)
+        for i in 1:4096
+            n = (n >>> 7) ⊻ unsafe_load(ptr, (n & mask + 1) % Int)
+        end
+    end
+    return n
+end;
+
+# ╔═╡ 1f38f8c6-8ee5-11eb-1c01-f3706534a9cf
+let
+	data = rand(UInt, 256 + 8)
+	@btime alignment_test($data, 0) seconds=1
+	@btime alignment_test($data, 60) seconds=1
+	nothing
+end
+
+# ╔═╡ 3fae31a0-8af0-11eb-1ea8-7980e7875039
+let
+	memory_address = reinterpret(UInt, pointer(rand(1024)))
+	@assert iszero(memory_address % 64) # should not error!
+end
+
+# ╔═╡ 11c500e8-8ee2-11eb-3291-4382b60c5a2b
+let
+	data = rand(UInt, 2^10)
+	show(stdout, MIME"text/plain"(), @benchmark increment($data) seconds=1)
+	println('\n')
+	show(stdout, MIME"text/plain"(), @benchmark increment!($data) seconds=1)
+end
+
+# ╔═╡ 61ee9ace-8af1-11eb-34bd-c5af962c8d82
+let
+	Base.:+(x::Int, y::AllocatedInteger) = x + y.x
+	Base.:+(x::AllocatedInteger, y::AllocatedInteger) = x.x + y.x
+
+	data_stack = [StackAllocated(i) for i in rand(UInt16, 1000000)]
+	data_heap = [HeapAllocated(i.x) for i in data_stack]
+	
+	@btime sum($data_stack) seconds=1
+	@btime sum($data_heap) seconds=1
+	nothing
+end
+
+# ╔═╡ 6ba266f4-8af1-11eb-10a3-3daf6e473142
+let
+	data_stack = [StackAllocated(i) for i in rand(UInt16, 1)]
+	data_heap = [HeapAllocated(i.x) for i in data_stack]
+	
+	println(rpad("First object of data_stack:", 36), data_stack[1])
+	println(
+		rpad("First data in data_stack array:", 36),
+		unsafe_load(pointer(data_stack)),
+		'\n'
+	)
+	
+	println(rpad("First object of data_heap:", 36), data_heap[1])
+	first_data = unsafe_load(Ptr{UInt}(pointer(data_heap)))
+	println(rpad("First data in data_heap array:", 36), repr(first_data))
+	println(
+		"Data at address ",
+		repr(first_data), ": ",
+		unsafe_load(Ptr{HeapAllocated}(first_data))
+	)
+end
+
+# ╔═╡ a0286cdc-8af1-11eb-050e-072acdd4f0a0
+let
+	# Make sure the vector is small so we don't time cache misses
+	data = rand(UInt64, 4096)
+	@btime sum_boundscheck($data) seconds=1
+	@btime sum_inbounds($data) seconds=1
+	nothing
+end
+
+# ╔═╡ cc99d9ce-8af1-11eb-12ec-fbd6df3becc8
+let
+	data = rand(Float64, 4096)
+	@btime sum_boundscheck($data) seconds=1
+	@btime sum_inbounds($data) seconds=1
+	nothing
+end
+
+# ╔═╡ e8d2ec8e-8af1-11eb-2018-1fa4df5b47ad
+let
+	data = rand(Float64, 4096)
+	@btime sum_inbounds($data) seconds=1
+	@btime sum_simd($data) seconds=1
+	nothing
+end
+
 # ╔═╡ 054d848a-8af2-11eb-1f98-67f5d0b9f4ec
-with_terminal() do
+let
 	N  = 1_000_000
 	array_of_structs = [rand(AlignmentTest) for i in 1:N]
 	struct_of_arrays = AlignmentTestVector(
@@ -749,6 +754,7 @@ with_terminal() do
 
 	@btime sum(x -> x.a, $array_of_structs) seconds=1
 	@btime sum($struct_of_arrays.a) seconds=1
+	nothing
 end
 
 # ╔═╡ 0dfc5054-8af2-11eb-098d-35f4e69ae544
@@ -777,10 +783,11 @@ function manual_count_ones(x)
 end;
 
 # ╔═╡ 14e46866-8af2-11eb-0894-bba824f266f0
-with_terminal() do
+let
 	data = rand(UInt, 10000)
 	@btime sum(manual_count_ones, $data) seconds=1
 	@btime sum(count_ones, $data) seconds=1
+	nothing
 end
 
 # ╔═╡ 1e7edfdc-8af2-11eb-1429-4d4220bad0f0
@@ -809,7 +816,7 @@ end;
 md"We can verify it works by checking the assembly of the function, which should contain only a single `vaesenc` instruction, as well as the `retq` (return) and the `nopw` (do nothing, used as a filler to align the CPU instructions in memory) instruction:"
 
 # ╔═╡ 76a4e83c-8af2-11eb-16d7-75eaabcb21b6
-with_terminal(() -> @code_native aesenc(__m128i((1, 1)), __m128i((1, 1))))
+@code_native aesenc(__m128i((1, 1)), __m128i((1, 1)))
 
 # ╔═╡ 797264de-8af2-11eb-0cb0-adf3fbc95c90
 md"""Algorithms which makes use of specialized instructions can be extremely fast. [In a blog post](https://mollyrocket.com/meowhash), the video game company Molly Rocket unveiled a new non-cryptographic hash function using AES instructions which reached unprecedented speeds."""
@@ -820,9 +827,6 @@ Consider the assembly of this function:"
 
 # ╔═╡ 36b723fc-8ee9-11eb-1b92-451b992acc0c
 f() = error();
-
-# ╔═╡ 37cd1f1c-8ee9-11eb-015c-ade9efc27708
-with_terminal(() -> @code_native f())
 
 # ╔═╡ 8af63980-8af2-11eb-3028-83a935bac0db
 md"""
@@ -835,7 +839,7 @@ However, if we show the assembly of this function:
 call_plus(x) = x + 1;
 
 # ╔═╡ 93af6754-8af2-11eb-0fe6-216d76e683de
-with_terminal(() -> @code_native debuginfo=:none call_plus(1))
+@code_native debuginfo=:none call_plus(1)
 
 # ╔═╡ a105bd68-8af2-11eb-31f6-3335b4fb0f08
 md"""
@@ -870,10 +874,11 @@ begin
 end;
 
 # ╔═╡ b4d9cbb8-8af2-11eb-247c-d5b16e0de13f
-with_terminal() do
+let
 	data = rand(UInt, 1024)
 	@btime time_function(noninline_poly, $data) seconds=1
 	@btime time_function(inline_poly, $data) seconds=1
+	nothing
 end
 
 # ╔═╡ bc0a2f22-8af2-11eb-3803-f54f84ddfc46
@@ -947,7 +952,7 @@ The story for unrolling is similar to that for SIMD: The compiler will only unro
 """
 
 # ╔═╡ f0bc1fdc-8ee9-11eb-2916-d71e1cf36375
-with_terminal() do
+let
 	data = fill(false, 2^20)
 	
 	# any: Stops as soon as it finds a `true`
@@ -959,6 +964,7 @@ with_terminal() do
 	data[1] = true
 	@btime any($data) seconds=1
 	@btime reduce(|, $data) seconds=1
+	nothing
 end
 
 # ╔═╡ 36a2872e-8eeb-11eb-0999-4153ced71678
@@ -990,7 +996,7 @@ begin
 end;
 
 # ╔═╡ d4a43094-8eeb-11eb-106f-3b54253aa663
-with_terminal() do
+let
 	data = fill(false, 2^20)
 	@btime reduce(|, $data) seconds=1
 	@btime unroll_compromise($data) seconds=1
@@ -998,6 +1004,7 @@ with_terminal() do
 	data[1] = true
 	@btime any($data) seconds=1
 	@btime unroll_compromise($data) seconds=1
+	nothing
 end
 
 # ╔═╡ 270950ac-8eed-11eb-365d-df9d36d090bc
@@ -1036,12 +1043,13 @@ function copy_odds_branches!(dst::Vector{T}, src::Vector{T}) where {T <: Integer
 end;
 
 # ╔═╡ cf90c600-8af2-11eb-262a-2763ae29b428
-with_terminal() do
+let
 	dst = rand(UInt32, 2^18)
 	src_random = rand(UInt32, 2^18)
 	src_all_odd = [(2*i+1) % UInt32 for i in src_random]
 	@btime copy_odds_branches!($dst, $src_random) seconds=1
 	@btime copy_odds_branches!($dst, $src_all_odd) seconds=1
+	nothing
 end
 
 # ╔═╡ d53422a0-8af2-11eb-0417-b9740c4a571c
@@ -1052,13 +1060,14 @@ Note that if you use smaller vectors and repeat the computation many times, as t
 """
 
 # ╔═╡ dc5b9bbc-8af2-11eb-0197-9b5da5087f0d
-with_terminal() do
+let
 	src_random = rand(UInt32, 128)
 	dst = similar(src_random)
 	src_all_odd = [(2i+1) % UInt32 for i in src_random]
 	
 	@btime copy_odds_branches!($dst, $src_random) seconds=1
 	@btime copy_odds_branches!($dst, $src_all_odd) seconds=1
+	nothing
 end
 
 # ╔═╡ e735a302-8af2-11eb-2ce7-01435b60fdd9
@@ -1080,12 +1089,13 @@ function copy_odds_branchless!(dst::Vector{T}, src::Vector{T}) where {T <: Integ
 end;
 
 # ╔═╡ ee579dca-8af2-11eb-140f-a96778b7b39f
-with_terminal() do
+let
 	dst = rand(UInt32, 2^18)
 	src_random = rand(UInt32, 2^18)
 	src_all_odd = [(2*i+1) % UInt32 for i in src_random]
 	@btime copy_odds_branchless!($dst, $src_random) seconds=1
 	@btime copy_odds_branchless!($dst, $src_all_odd) seconds=1
+	nothing
 end
 
 # ╔═╡ f969eed2-8af2-11eb-1e78-5b322a7f4ebd
@@ -1166,10 +1176,11 @@ function read_indices(dst::Vector{T}, src::Vector{T}) where {T <: Integer}
 end;
 
 # ╔═╡ 29463b02-8dab-11eb-0bf5-23a3f4075b32
-with_terminal() do
+let
 	dst = rand(UInt32, 2^18)
 	src = UInt32.(eachindex(dst))
 	@btime read_indices($dst, $src) seconds=1
+	nothing
 end
 
 # ╔═╡ a5d93434-8dac-11eb-34bf-91061089f0ef
@@ -1236,7 +1247,7 @@ function parallel_sleep(n_jobs)
 end;
 
 # ╔═╡ 2192c228-8af3-11eb-19d8-81db4f3c0d81
-with_terminal() do
+let
 	parallel_sleep(1); # run once to compile it
 	for njobs in (1, 4, 8, 16, 32)
 		@time parallel_sleep(njobs);
@@ -1294,8 +1305,11 @@ begin
 	end
 end;
 
+# ╔═╡ 37cd1f1c-8ee9-11eb-015c-ade9efc27708
+@code_native f()
+
 # ╔═╡ 39a85a58-8af3-11eb-1334-6f50ed9acd31
-with_terminal(() -> @time julia_single_threaded())
+@time julia_single_threaded();
 
 # ╔═╡ 3e83981a-8af3-11eb-3c87-77797adb7e1f
 md"That took around 2 seconds on my computer. Now for a parallel one:"
@@ -1325,7 +1339,7 @@ begin
 end;
 
 # ╔═╡ 4be905b4-8af3-11eb-0344-dbdc7e94ddf3
-with_terminal(() -> @time julia_multi_threaded())
+@time julia_multi_threaded();
 
 # ╔═╡ 4e8f6cb8-8af3-11eb-1746-9384995d7022
 md"""
@@ -1361,13 +1375,25 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
 BenchmarkTools = "~1.1.3"
-PlutoUI = "~0.7.9"
+PlutoUI = "~0.7.38"
 StaticArrays = "~1.2.12"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
+
+[[AbstractPlutoDingetjes]]
+deps = ["Pkg"]
+git-tree-sha1 = "8eaf9f1b4921132a4cff3f36a1d9ba923b14a481"
+uuid = "6e696c72-6542-2067-7265-42206c756150"
+version = "1.1.4"
+
+[[ArgTools]]
+uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
+
+[[Artifacts]]
+uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
 [[Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
@@ -1378,9 +1404,46 @@ git-tree-sha1 = "42ac5e523869a84eac9669eaceed9e4aa0e1587b"
 uuid = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 version = "1.1.4"
 
+[[ColorTypes]]
+deps = ["FixedPointNumbers", "Random"]
+git-tree-sha1 = "024fe24d83e4a5bf5fc80501a314ce0d1aa35597"
+uuid = "3da002f7-5984-5a60-b8a6-cbb66c0b333f"
+version = "0.11.0"
+
+[[CompilerSupportLibraries_jll]]
+deps = ["Artifacts", "Libdl"]
+uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
+
 [[Dates]]
 deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
+
+[[Downloads]]
+deps = ["ArgTools", "LibCURL", "NetworkOptions"]
+uuid = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
+
+[[FixedPointNumbers]]
+deps = ["Statistics"]
+git-tree-sha1 = "335bfdceacc84c5cdf16aadc768aa5ddfc5383cc"
+uuid = "53c48c17-4a7d-5ca2-90c5-79b7896eea93"
+version = "0.8.4"
+
+[[Hyperscript]]
+deps = ["Test"]
+git-tree-sha1 = "8d511d5b81240fc8e6802386302675bdf47737b9"
+uuid = "47d2ed2b-36de-50cf-bf87-49c2cf4b8b91"
+version = "0.0.4"
+
+[[HypertextLiteral]]
+git-tree-sha1 = "2b078b5a615c6c0396c77810d92ee8c6f470d238"
+uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
+version = "0.9.3"
+
+[[IOCapture]]
+deps = ["Logging", "Random"]
+git-tree-sha1 = "f7be53659ab06ddc986428d3a9dcc95f6fa6705a"
+uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
+version = "0.2.2"
 
 [[InteractiveUtils]]
 deps = ["Markdown"]
@@ -1392,11 +1455,27 @@ git-tree-sha1 = "8076680b162ada2a031f707ac7b4953e30667a37"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.21.2"
 
+[[LibCURL]]
+deps = ["LibCURL_jll", "MozillaCACerts_jll"]
+uuid = "b27032c2-a3e7-50c8-80cd-2d36dbcbfd21"
+
+[[LibCURL_jll]]
+deps = ["Artifacts", "LibSSH2_jll", "Libdl", "MbedTLS_jll", "Zlib_jll", "nghttp2_jll"]
+uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
+
+[[LibGit2]]
+deps = ["Base64", "NetworkOptions", "Printf", "SHA"]
+uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
+
+[[LibSSH2_jll]]
+deps = ["Artifacts", "Libdl", "MbedTLS_jll"]
+uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
+
 [[Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 
 [[LinearAlgebra]]
-deps = ["Libdl"]
+deps = ["Libdl", "libblastrampoline_jll"]
 uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 
 [[Logging]]
@@ -1406,8 +1485,22 @@ uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 deps = ["Base64"]
 uuid = "d6f4376e-aef5-505a-96c1-9c027394607a"
 
+[[MbedTLS_jll]]
+deps = ["Artifacts", "Libdl"]
+uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
+
 [[Mmap]]
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
+
+[[MozillaCACerts_jll]]
+uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
+
+[[NetworkOptions]]
+uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
+
+[[OpenBLAS_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
+uuid = "4536629a-c528-5b80-bd46-f80d51c5b363"
 
 [[Parsers]]
 deps = ["Dates"]
@@ -1415,18 +1508,26 @@ git-tree-sha1 = "438d35d2d95ae2c5e8780b330592b6de8494e779"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 version = "2.0.3"
 
+[[Pkg]]
+deps = ["Artifacts", "Dates", "Downloads", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
+uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+
 [[PlutoUI]]
-deps = ["Base64", "Dates", "InteractiveUtils", "JSON", "Logging", "Markdown", "Random", "Reexport", "Suppressor"]
-git-tree-sha1 = "44e225d5837e2a2345e69a1d1e01ac2443ff9fcb"
+deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "Markdown", "Random", "Reexport", "UUIDs"]
+git-tree-sha1 = "670e559e5c8e191ded66fa9ea89c97f10376bb4c"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-version = "0.7.9"
+version = "0.7.38"
 
 [[Printf]]
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
+[[REPL]]
+deps = ["InteractiveUtils", "Markdown", "Sockets", "Unicode"]
+uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
+
 [[Random]]
-deps = ["Serialization"]
+deps = ["SHA", "Serialization"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [[Reexport]]
@@ -1439,6 +1540,9 @@ uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 
 [[Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
+
+[[Sockets]]
+uuid = "6462fe0b-24de-5631-8697-dd941f90decc"
 
 [[SparseArrays]]
 deps = ["LinearAlgebra", "Random"]
@@ -1454,10 +1558,17 @@ version = "1.2.12"
 deps = ["LinearAlgebra", "SparseArrays"]
 uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
-[[Suppressor]]
-git-tree-sha1 = "a819d77f31f83e5792a76081eee1ea6342ab8787"
-uuid = "fd094767-a336-5f1f-9728-57cf17d0bbfb"
-version = "0.2.0"
+[[TOML]]
+deps = ["Dates"]
+uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[[Tar]]
+deps = ["ArgTools", "SHA"]
+uuid = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
+
+[[Test]]
+deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
+uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [[UUIDs]]
 deps = ["Random", "SHA"]
@@ -1465,6 +1576,22 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [[Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
+
+[[Zlib_jll]]
+deps = ["Libdl"]
+uuid = "83775a58-1f1d-513f-b197-d71354ab007a"
+
+[[libblastrampoline_jll]]
+deps = ["Artifacts", "Libdl", "OpenBLAS_jll"]
+uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
+
+[[nghttp2_jll]]
+deps = ["Artifacts", "Libdl"]
+uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
+
+[[p7zip_jll]]
+deps = ["Artifacts", "Libdl"]
+uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 """
 
 # ╔═╡ Cell order:
@@ -1586,7 +1713,7 @@ uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 # ╟─2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
 # ╠═316e5074-8af3-11eb-256b-c5b212f7e0d3
 # ╠═39a85a58-8af3-11eb-1334-6f50ed9acd31
-# ╠═3e83981a-8af3-11eb-3c87-77797adb7e1f
+# ╟─3e83981a-8af3-11eb-3c87-77797adb7e1f
 # ╠═3e1c4090-8af3-11eb-33d0-b9c299fef20d
 # ╠═4be905b4-8af3-11eb-0344-dbdc7e94ddf3
 # ╟─4e8f6cb8-8af3-11eb-1746-9384995d7022
