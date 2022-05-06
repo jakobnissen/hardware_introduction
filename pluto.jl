@@ -7,7 +7,6 @@ using InteractiveUtils
 # ╔═╡ 675e66aa-8aef-11eb-27be-5fe273e33297
 # Load packages
 begin
-	using StaticArrays
 	using BenchmarkTools
 	using PlutoUI
 end
@@ -56,7 +55,7 @@ If you don't already have these packages installed, uncomment these lines and ru
 # ╔═╡ 7490def0-8aef-11eb-19ce-4b11ce5a9328
 # begin
 # 	using Pkg
-# 	Pkg.add(["BenchmarkTools", "StaticArrays", "PlutoUI"])
+# 	Pkg.add(["BenchmarkTools", "PlutoUI"])
 # end
 
 # ╔═╡ 800d827e-8c20-11eb-136a-97a622a7c1e6
@@ -103,7 +102,7 @@ Benchmarking this is a little tricky, because the *first* invocation will includ
 
 $$[CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
-On my computer, finding a single byte in a file (including opening and closing the file) takes about 500 µs, and accessing 1,000,000 integers from memory takes 200 milliseconds. So RAM latency is on the order of 2,500 times lower than disk's. Therefore, this, repeated access to files *must* be avoided in high performance computing.
+On my computer, finding a single byte in a file (including opening and closing the file) takes about 500 µs, and accessing 1,000,000 integers from memory takes 200 milliseconds. So RAM latency is on the order of 2,500 times lower than disk's. Therefore, repeated access to files *must* be avoided in high performance computing.
 
 Only a few years back, SSDs were uncommon and HDD throughput was lower than today. Therefore, old texts will often warn people not to have your program depend on the disk at all for high throughput. That advice is mostly outdated today, as most programs are incapable of bottlenecking at the throughput of even cheap, modern SSDs of 1 GB/s. The advice today still stands only for programs that need *frequent* individual reads/writes to disk, where the high *latency* accumulates. In these situations, you should indeed keep your data in RAM.
 
@@ -163,7 +162,7 @@ In summary, we have seen that
   - Access data close together in memory instead of far apart
   - When accessing data close together in memory, do so close together in time, so when it's accessed the second time, it's still in cache.
 
-Cache usage has implications for your data structures. Hash tables such as `Dict`s and `Set`s are inherently cache inefficient and almost always cause cache misses, whereas arrays don't. Hence, while many operations of sets and dics are $O(1)$, their cost per operation is high.
+Cache usage has implications for your data structures. Hash tables such as `Dict`s and `Set`s are inherently cache inefficient and almost always cause cache misses, whereas arrays don't. Hence, while many operations of hash tables are $O(1)$ (i.e. they complete in constant time), their cost per operation is high.
 
 Many of the optimizations in this document indirectly impact cache use, so this is important to have in mind.
 """
@@ -448,15 +447,6 @@ The small size of the registers serves as a bottleneck for CPU throughput: It ca
 
 We can illustrate this with the following example:"""
 
-# ╔═╡ 84c0d56a-8af1-11eb-30f3-d137b377c31f
-let
-	# Create a single statically-sized vector of 8 32-bit integers
-	# I could also have created 4 64-bit ones, etc.
-	a = @SVector Int32[1,2,3,4,5,6,7,8]
-	@code_native debuginfo=:none a + a
-	nothing
-end
-
 # ╔═╡ 8c2ed15a-8af1-11eb-2e96-1df34510e773
 md"""
 Here, two 8×32 bit vectors are added together in one single instruction. You can see the CPU makes use of a single `vpaddd` (vector packed add double) instruction to add 8 32-bit integers, as well as the corresponding move instruction `vmovdqu`. Note that vector CPU instructions begin with `v`.
@@ -614,7 +604,7 @@ end;
 # ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
 let
 	data = rand(UInt, 2^24)
-	@time test_file("../alen/LICENSE")
+	@time test_file("../alen/Cargo.lock")
 	@time random_access(data, 1000000)
 	nothing
 end
@@ -715,6 +705,17 @@ let
 		repr(first_data), ": ",
 		unsafe_load(Ptr{HeapAllocated}(first_data))
 	)
+end
+
+# ╔═╡ 84c0d56a-8af1-11eb-30f3-d137b377c31f
+let
+	add_tuple(a, b) = a .+ b
+
+	# Create a tuple of 8 32-bit integers.
+	# could also have created 4 64-bit numbers etc.
+	numbers = ntuple(i -> rand(UInt32), 8)
+	@code_native debuginfo=:none add_tuple(numbers, numbers)
+	nothing
 end
 
 # ╔═╡ a0286cdc-8af1-11eb-050e-072acdd4f0a0
@@ -1371,12 +1372,10 @@ PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
 BenchmarkTools = "~1.1.3"
 PlutoUI = "~0.7.38"
-StaticArrays = "~1.2.12"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -1547,12 +1546,6 @@ uuid = "6462fe0b-24de-5631-8697-dd941f90decc"
 [[SparseArrays]]
 deps = ["LinearAlgebra", "Random"]
 uuid = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
-
-[[StaticArrays]]
-deps = ["LinearAlgebra", "Random", "Statistics"]
-git-tree-sha1 = "3240808c6d463ac46f1c1cd7638375cd22abbccb"
-uuid = "90137ffa-7385-5640-81b9-e52037218182"
-version = "1.2.12"
 
 [[Statistics]]
 deps = ["LinearAlgebra", "SparseArrays"]
