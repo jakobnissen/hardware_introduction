@@ -7,8 +7,8 @@ using InteractiveUtils
 # ╔═╡ 675e66aa-8aef-11eb-27be-5fe273e33297
 # Load packages
 begin
-	using BenchmarkTools
-	using PlutoUI
+    using BenchmarkTools
+    using PlutoUI
 end
 
 # ╔═╡ 15f5c31a-8aef-11eb-3f19-cf0a4e456e7a
@@ -54,8 +54,8 @@ If you don't already have these packages installed, uncomment these lines and ru
 
 # ╔═╡ 7490def0-8aef-11eb-19ce-4b11ce5a9328
 # begin
-# 	using Pkg
-# 	Pkg.add(["BenchmarkTools", "PlutoUI"])
+#     using Pkg
+#     Pkg.add(["BenchmarkTools", "PlutoUI"])
 # end
 
 # ╔═╡ 800d827e-8c20-11eb-136a-97a622a7c1e6
@@ -199,13 +199,13 @@ md"Then we can use Julia's introspection to get the relative position of each of
 
 # ╔═╡ d4c8c38c-8ee6-11eb-0b49-33fbfbd214f3
 let
-	T = AlignmentTest
-	println("Size of $T: ", sizeof(T), "bytes")
-	for fieldno in 1:fieldcount(T)
-		print("Name: ", fieldname(T, fieldno), '\t')
-		print("Size: ", sizeof(fieldtype(T, fieldno)), '\t')
-		print("Offset: ", fieldoffset(T, fieldno), '\n')
-	end
+    T = AlignmentTest
+    println("Size of $T: ", sizeof(T), "bytes")
+    for fieldno in 1:fieldcount(T)
+        print("Name: ", fieldname(T, fieldno), '\t')
+        print("Size: ", sizeof(fieldtype(T, fieldno)), '\t')
+        print("Offset: ", fieldoffset(T, fieldno), '\n')
+    end
 end
 
 # ╔═╡ 7b979410-8af0-11eb-299c-af0a5d740c24
@@ -310,8 +310,8 @@ md"If you have an inner loop executing millions of times, it may pay off to insp
 
 # ╔═╡ c5472fb0-8af0-11eb-04f1-95a1f7b6b9e0
 begin
-	divide_slow(x) = div(x, 8)
-	divide_fast(x) = x >>> 3;
+    divide_slow(x) = div(x, 8)
+    divide_fast(x) = x >>> 3;
 end;
 
 # ╔═╡ ce0e65d4-8af0-11eb-0c86-2105c26b62eb
@@ -331,8 +331,8 @@ In programming languages such as Julia, Python, R and Java, deallocation is auto
 
 # ╔═╡ dc24f5a0-8af0-11eb-0332-2bc0834d426c
 begin
-	thing = [1,2,3]
-	thing = nothing
+    thing = [1,2,3]
+    thing = nothing
 end
 
 # ╔═╡ e3c136de-8af0-11eb-06f1-9393c0f95fbb
@@ -346,20 +346,20 @@ md"The following example illustrates the difference in time spent in a function 
 
 # ╔═╡ f0e24b50-8af0-11eb-1a0e-5d925f3743e0
 begin
-	function increment(x::Vector{<:Integer})
-		y = similar(x)
-		@inbounds for i in eachindex(x)
-			y[i] = x[i] + 1
-		end
-		return y
-	end
+    function increment(x::Vector{<:Integer})
+        y = similar(x)
+        @inbounds for i in eachindex(x)
+            y[i] = x[i] + 1
+        end
+        return y
+    end
 
-	function increment!(x::Vector{<:Integer})
-		@inbounds for i in eachindex(x)
-			x[i] = x[i] + 1
-		end
-		return x
-	end
+    function increment!(x::Vector{<:Integer})
+        @inbounds for i in eachindex(x)
+            x[i] = x[i] + 1
+        end
+        return x
+    end
 end;
 
 # ╔═╡ 22512ab2-8af1-11eb-260b-8d6c16762547
@@ -398,15 +398,15 @@ _Note: Earlier versions of this notebook mentioned that stack-allocated types in
 
 # ╔═╡ 2a7c1fc6-8af1-11eb-2909-554597aa2949
 begin
-	abstract type AllocatedInteger end
+    abstract type AllocatedInteger end
 
-	struct StackAllocated <: AllocatedInteger
-		x::Int
-	end
+    struct StackAllocated <: AllocatedInteger
+        x::Int
+    end
 
-	mutable struct HeapAllocated <: AllocatedInteger
-		x::Int
-	end
+    mutable struct HeapAllocated <: AllocatedInteger
+        x::Int
+    end
 end
 
 # ╔═╡ 2e3304fe-8af1-11eb-0f6a-0f84d58326bf
@@ -477,22 +477,22 @@ In fact, even boundschecking, i.e. checking that you are not indexing outside th
 
 # ╔═╡ 94182f88-8af1-11eb-207a-37083c1ead68
 begin
-	function sum_boundscheck(x::Vector)
-		n = zero(eltype(x))
-		for i in eachindex(x)
-			n += x[i]
-		end
-		return n
-	end
+    function sum_boundscheck(x::Vector)
+        n = zero(eltype(x))
+        for i in eachindex(x)
+            n += x[i]
+        end
+        return n
+    end
 
-	function sum_inbounds(x::Vector)
-		n = zero(eltype(x))
-		# By removing the boundscheck, we allow automatic SIMD
-		@inbounds for i in eachindex(x)
-			n += x[i]
-		end
-		return n
-	end
+    function sum_inbounds(x::Vector)
+        n = zero(eltype(x))
+        # By removing the boundscheck, we allow automatic SIMD
+        @inbounds for i in eachindex(x)
+            n += x[i]
+        end
+        return n
+    end
 end;
 
 # ╔═╡ aa3931fc-8af1-11eb-2f42-f582b8e639ad
@@ -515,8 +515,8 @@ Perhaps surprisingly, addition of floating point numbers can give different resu
 
 # ╔═╡ c01bf4b6-8af1-11eb-2f17-bfe0c93d48f9
 begin
-	x = eps(1.0) * 0.4
-	1.0 + (x + x) == (1.0 + x) + x
+    x = eps(1.0) * 0.4
+    1.0 + (x + x) == (1.0 + x) + x
 end
 
 # ╔═╡ c80e05ba-8af1-11eb-20fc-235b45f2eb4b
@@ -576,44 +576,44 @@ Alignment is no longer a problem, no space is wasted on padding. When running th
 
 # ╔═╡ 72fbb3ec-8ee8-11eb-3836-11092ef74e86
 function Base.rand(::Type{AlignmentTest})
-	AlignmentTest(rand(UInt32), rand(UInt16), rand(UInt8))
+    AlignmentTest(rand(UInt32), rand(UInt16), rand(UInt8))
 end;
 
 # ╔═╡ abb45d6a-8aef-11eb-37a4-7b10847b39b4
 begin
-	# Open a file
-	function test_file(path)
-		open(path) do file
-			# Go to 1000'th byte of file and read it
-			seek(file, 1000)
-			read(file, UInt8)
-		end
-	end
+    # Open a file
+    function test_file(path)
+        open(path) do file
+            # Go to 1000'th byte of file and read it
+            seek(file, 1000)
+            read(file, UInt8)
+        end
+    end
 
-	# Randomly access data N times
-	function random_access(data::Vector{UInt}, N::Integer)
-		n = rand(UInt)
-		mask = length(data) - 1
-		@inbounds for i in 1:N
-			n = (n >>> 7) ⊻ data[n & mask + 1]
-		end
-		return n
-	end
+    # Randomly access data N times
+    function random_access(data::Vector{UInt}, N::Integer)
+        n = rand(UInt)
+        mask = length(data) - 1
+        @inbounds for i in 1:N
+            n = (n >>> 7) ⊻ data[n & mask + 1]
+        end
+        return n
+    end
 end;
 
 # ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
 let
-	data = rand(UInt, 2^24)
-	@time test_file("../alen/Cargo.lock")
-	@time random_access(data, 1000000)
-	nothing
+    data = rand(UInt, 2^24)
+    @time test_file("../alen/Cargo.lock")
+    @time random_access(data, 1000000)
+    nothing
 end
 
 # ╔═╡ b73605ca-8ee4-11eb-1a0d-bb6678de91c6
 begin
-	@btime random_access($(rand(UInt, 1024)), 2^20) seconds=1
-	@btime random_access($(rand(UInt, 2^24)), 2^20) seconds=1
-	nothing
+    @btime random_access($(rand(UInt, 1024)), 2^20) seconds=1
+    @btime random_access($(rand(UInt, 2^24)), 2^20) seconds=1
+    nothing
 end
 
 # ╔═╡ ffca4c72-8aef-11eb-07ac-6d5c58715a71
@@ -628,10 +628,10 @@ end;
 
 # ╔═╡ e71e4798-8ee4-11eb-3ea2-fdbbcdcf7410
 let
-	data = rand(UInt, 2^24)
-	@btime random_access($data, 2^20) seconds=1
-	@btime linear_access($data, 2^20) seconds=1
-	nothing
+    data = rand(UInt, 2^24)
+    @btime random_access($data, 2^20) seconds=1
+    @btime linear_access($data, 2^20) seconds=1
+    nothing
 end
 
 # ╔═╡ 18e8e4b6-8af0-11eb-2f17-2726f162e9b0
@@ -652,110 +652,110 @@ end;
 
 # ╔═╡ 1f38f8c6-8ee5-11eb-1c01-f3706534a9cf
 let
-	data = rand(UInt, 256 + 8)
-	@btime alignment_test($data, 0) seconds=1
-	@btime alignment_test($data, 60) seconds=1
-	nothing
+    data = rand(UInt, 256 + 8)
+    @btime alignment_test($data, 0) seconds=1
+    @btime alignment_test($data, 60) seconds=1
+    nothing
 end
 
 # ╔═╡ 3fae31a0-8af0-11eb-1ea8-7980e7875039
 let
-	memory_address = reinterpret(UInt, pointer(rand(1024)))
-	@assert iszero(memory_address % 64) # should not error!
+    memory_address = reinterpret(UInt, pointer(rand(1024)))
+    @assert iszero(memory_address % 64) # should not error!
 end
 
 # ╔═╡ 11c500e8-8ee2-11eb-3291-4382b60c5a2b
 let
-	data = rand(UInt, 2^10)
-	show(stdout, MIME"text/plain"(), @benchmark increment($data) seconds=1)
-	println('\n')
-	show(stdout, MIME"text/plain"(), @benchmark increment!($data) seconds=1)
+    data = rand(UInt, 2^10)
+    show(stdout, MIME"text/plain"(), @benchmark increment($data) seconds=1)
+    println('\n')
+    show(stdout, MIME"text/plain"(), @benchmark increment!($data) seconds=1)
 end
 
 # ╔═╡ 61ee9ace-8af1-11eb-34bd-c5af962c8d82
 let
-	Base.:+(x::Int, y::AllocatedInteger) = x + y.x
-	Base.:+(x::AllocatedInteger, y::AllocatedInteger) = x.x + y.x
+    Base.:+(x::Int, y::AllocatedInteger) = x + y.x
+    Base.:+(x::AllocatedInteger, y::AllocatedInteger) = x.x + y.x
 
-	data_stack = [StackAllocated(i) for i in rand(UInt16, 1000000)]
-	data_heap = [HeapAllocated(i.x) for i in data_stack]
-	
-	@btime sum($data_stack) seconds=1
-	@btime sum($data_heap) seconds=1
-	nothing
+    data_stack = [StackAllocated(i) for i in rand(UInt16, 1000000)]
+    data_heap = [HeapAllocated(i.x) for i in data_stack]
+
+    @btime sum($data_stack) seconds=1
+    @btime sum($data_heap) seconds=1
+    nothing
 end
 
 # ╔═╡ 6ba266f4-8af1-11eb-10a3-3daf6e473142
 let
-	data_stack = [StackAllocated(i) for i in rand(UInt16, 1)]
-	data_heap = [HeapAllocated(i.x) for i in data_stack]
-	
-	println(rpad("First object of data_stack:", 36), data_stack[1])
-	println(
-		rpad("First data in data_stack array:", 36),
-		unsafe_load(pointer(data_stack)),
-		'\n'
-	)
-	
-	println(rpad("First object of data_heap:", 36), data_heap[1])
-	first_data = unsafe_load(Ptr{UInt}(pointer(data_heap)))
-	println(rpad("First data in data_heap array:", 36), repr(first_data))
-	println(
-		"Data at address ",
-		repr(first_data), ": ",
-		unsafe_load(Ptr{HeapAllocated}(first_data))
-	)
+    data_stack = [StackAllocated(i) for i in rand(UInt16, 1)]
+    data_heap = [HeapAllocated(i.x) for i in data_stack]
+
+    println(rpad("First object of data_stack:", 36), data_stack[1])
+    println(
+        rpad("First data in data_stack array:", 36),
+        unsafe_load(pointer(data_stack)),
+        '\n'
+    )
+
+    println(rpad("First object of data_heap:", 36), data_heap[1])
+    first_data = unsafe_load(Ptr{UInt}(pointer(data_heap)))
+    println(rpad("First data in data_heap array:", 36), repr(first_data))
+    println(
+        "Data at address ",
+        repr(first_data), ": ",
+        unsafe_load(Ptr{HeapAllocated}(first_data))
+    )
 end
 
 # ╔═╡ 84c0d56a-8af1-11eb-30f3-d137b377c31f
 let
-	add_tuple(a, b) = a .+ b
+    add_tuple(a, b) = a .+ b
 
-	# Create a tuple of 8 32-bit integers.
-	# could also have created 4 64-bit numbers etc.
-	numbers = ntuple(i -> rand(UInt32), 8)
-	@code_native debuginfo=:none add_tuple(numbers, numbers)
-	nothing
+    # Create a tuple of 8 32-bit integers.
+    # could also have created 4 64-bit numbers etc.
+    numbers = ntuple(i -> rand(UInt32), 8)
+    @code_native debuginfo=:none add_tuple(numbers, numbers)
+    nothing
 end
 
 # ╔═╡ a0286cdc-8af1-11eb-050e-072acdd4f0a0
 let
-	# Make sure the vector is small so we don't time cache misses
-	data = rand(UInt64, 4096)
-	@btime sum_boundscheck($data) seconds=1
-	@btime sum_inbounds($data) seconds=1
-	nothing
+    # Make sure the vector is small so we don't time cache misses
+    data = rand(UInt64, 4096)
+    @btime sum_boundscheck($data) seconds=1
+    @btime sum_inbounds($data) seconds=1
+    nothing
 end
 
 # ╔═╡ cc99d9ce-8af1-11eb-12ec-fbd6df3becc8
 let
-	data = rand(Float64, 4096)
-	@btime sum_boundscheck($data) seconds=1
-	@btime sum_inbounds($data) seconds=1
-	nothing
+    data = rand(Float64, 4096)
+    @btime sum_boundscheck($data) seconds=1
+    @btime sum_inbounds($data) seconds=1
+    nothing
 end
 
 # ╔═╡ e8d2ec8e-8af1-11eb-2018-1fa4df5b47ad
 let
-	data = rand(Float64, 4096)
-	@btime sum_inbounds($data) seconds=1
-	@btime sum_simd($data) seconds=1
-	nothing
+    data = rand(Float64, 4096)
+    @btime sum_inbounds($data) seconds=1
+    @btime sum_simd($data) seconds=1
+    nothing
 end
 
 # ╔═╡ 054d848a-8af2-11eb-1f98-67f5d0b9f4ec
 let
-	N  = 1_000_000
-	array_of_structs = [rand(AlignmentTest) for i in 1:N]
-	struct_of_arrays = AlignmentTestVector(
-		rand(UInt32, N),
-		rand(UInt16, N),
-		rand(UInt8, N)
-	)
+    N  = 1_000_000
+    array_of_structs = [rand(AlignmentTest) for i in 1:N]
+    struct_of_arrays = AlignmentTestVector(
+        rand(UInt32, N),
+        rand(UInt16, N),
+        rand(UInt8, N)
+    )
 
-	@btime sum(x -> x.a, $array_of_structs) seconds=1
-	@btime sum($struct_of_arrays.a) seconds=1
-	nothing
+    @btime sum(x -> x.a, $array_of_structs) seconds=1
+    @btime sum($struct_of_arrays.a) seconds=1
+    nothing
 end
 
 # ╔═╡ 0dfc5054-8af2-11eb-098d-35f4e69ae544
@@ -785,10 +785,10 @@ end;
 
 # ╔═╡ 14e46866-8af2-11eb-0894-bba824f266f0
 let
-	data = rand(UInt, 10000)
-	@btime sum(manual_count_ones, $data) seconds=1
-	@btime sum(count_ones, $data) seconds=1
-	nothing
+    data = rand(UInt, 10000)
+    @btime sum(manual_count_ones, $data) seconds=1
+    @btime sum(count_ones, $data) seconds=1
+    nothing
 end
 
 # ╔═╡ 1e7edfdc-8af2-11eb-1429-4d4220bad0f0
@@ -803,14 +803,14 @@ The latest CPUs contain specialized instructions for AES encryption and SHA256 h
 
 # ╔═╡ 25a47c54-8af2-11eb-270a-5b58c3aafe6e
 begin
-	# This is a 128-bit CPU "vector" in Julia
-	const __m128i = NTuple{2, VecElement{Int64}}
+    # This is a 128-bit CPU "vector" in Julia
+    const __m128i = NTuple{2, VecElement{Int64}}
 
-	# Define the function in terms of LLVM instructions
-	aesenc(a, roundkey) = ccall(
-		"llvm.x86.aesni.aesenc", llvmcall, __m128i,
-		(__m128i, __m128i), a, roundkey
-	)
+    # Define the function in terms of LLVM instructions
+    aesenc(a, roundkey) = ccall(
+        "llvm.x86.aesni.aesenc", llvmcall, __m128i,
+        (__m128i, __m128i), a, roundkey
+    )
 end;
 
 # ╔═╡ 2dc4f936-8af2-11eb-1117-9bc10e619ec6
@@ -862,24 +862,24 @@ An extreme difference between inlining and no inlining can be demonstrated thus:
 
 # ╔═╡ a843a0c2-8af2-11eb-2435-17e2c36ec253
 begin
-	@noinline noninline_poly(x) = x^3 - 4x^2 + 9x - 11
-	inline_poly(x) = x^3 - 4x^2 + 9x - 11
+    @noinline noninline_poly(x) = x^3 - 4x^2 + 9x - 11
+    inline_poly(x) = x^3 - 4x^2 + 9x - 11
 
-	function time_function(F, x::AbstractVector)
-		n = 0
-		for i in x
-			n += F(i)
-		end
-		return n
-	end
+    function time_function(F, x::AbstractVector)
+        n = 0
+        for i in x
+            n += F(i)
+        end
+        return n
+    end
 end;
 
 # ╔═╡ b4d9cbb8-8af2-11eb-247c-d5b16e0de13f
 let
-	data = rand(UInt, 1024)
-	@btime time_function(noninline_poly, $data) seconds=1
-	@btime time_function(inline_poly, $data) seconds=1
-	nothing
+    data = rand(UInt, 1024)
+    @btime time_function(noninline_poly, $data) seconds=1
+    @btime time_function(inline_poly, $data) seconds=1
+    nothing
 end
 
 # ╔═╡ bc0a2f22-8af2-11eb-3803-f54f84ddfc46
@@ -954,18 +954,18 @@ The story for unrolling is similar to that for SIMD: The compiler will only unro
 
 # ╔═╡ f0bc1fdc-8ee9-11eb-2916-d71e1cf36375
 let
-	data = fill(false, 2^20)
-	
-	# any: Stops as soon as it finds a `true`
-	@btime any($data) seconds=1
-	
-	# reduce: Loops over all values in the array
-	@btime reduce(|, $data) seconds=1
-	
-	data[1] = true
-	@btime any($data) seconds=1
-	@btime reduce(|, $data) seconds=1
-	nothing
+    data = fill(false, 2^20)
+
+    # any: Stops as soon as it finds a `true`
+    @btime any($data) seconds=1
+
+    # reduce: Loops over all values in the array
+    @btime reduce(|, $data) seconds=1
+
+    data[1] = true
+    @btime any($data) seconds=1
+    @btime reduce(|, $data) seconds=1
+    nothing
 end
 
 # ╔═╡ 36a2872e-8eeb-11eb-0999-4153ced71678
@@ -977,35 +977,35 @@ We can create a compromise by manually unrolling. In the functions below, `check
 
 # ╔═╡ 9ca70cfc-8eeb-11eb-361b-b929089ca109
 begin
-	@inline function check128(data, i)
-	    n = false
-	    @inbounds for j in 0:127
-		    n |= data[i+j]
-	    end
-	    n
+    @inline function check128(data, i)
+        n = false
+        @inbounds for j in 0:127
+            n |= data[i+j]
+        end
+        n
     end
-	
-	function unroll_compromise(data)
-		found = false
-		i = 1
-		while !found & (i ≤ length(data))
-			check128(data, i) && return true
-			i += 128
-		end
-		return false
-	end
+
+    function unroll_compromise(data)
+        found = false
+        i = 1
+        while !found & (i ≤ length(data))
+            check128(data, i) && return true
+            i += 128
+        end
+        return false
+    end
 end;
 
 # ╔═╡ d4a43094-8eeb-11eb-106f-3b54253aa663
 let
-	data = fill(false, 2^20)
-	@btime reduce(|, $data) seconds=1
-	@btime unroll_compromise($data) seconds=1
-	
-	data[1] = true
-	@btime any($data) seconds=1
-	@btime unroll_compromise($data) seconds=1
-	nothing
+    data = fill(false, 2^20)
+    @btime reduce(|, $data) seconds=1
+    @btime unroll_compromise($data) seconds=1
+
+    data[1] = true
+    @btime any($data) seconds=1
+    @btime unroll_compromise($data) seconds=1
+    nothing
 end
 
 # ╔═╡ 270950ac-8eed-11eb-365d-df9d36d090bc
@@ -1045,12 +1045,12 @@ end;
 
 # ╔═╡ cf90c600-8af2-11eb-262a-2763ae29b428
 let
-	dst = rand(UInt32, 2^18)
-	src_random = rand(UInt32, 2^18)
-	src_all_odd = [(2*i+1) % UInt32 for i in src_random]
-	@btime copy_odds_branches!($dst, $src_random) seconds=1
-	@btime copy_odds_branches!($dst, $src_all_odd) seconds=1
-	nothing
+    dst = rand(UInt32, 2^18)
+    src_random = rand(UInt32, 2^18)
+    src_all_odd = [(2*i+1) % UInt32 for i in src_random]
+    @btime copy_odds_branches!($dst, $src_random) seconds=1
+    @btime copy_odds_branches!($dst, $src_all_odd) seconds=1
+    nothing
 end
 
 # ╔═╡ d53422a0-8af2-11eb-0417-b9740c4a571c
@@ -1062,13 +1062,13 @@ Note that if you use smaller vectors and repeat the computation many times, as t
 
 # ╔═╡ dc5b9bbc-8af2-11eb-0197-9b5da5087f0d
 let
-	src_random = rand(UInt32, 128)
-	dst = similar(src_random)
-	src_all_odd = [(2i+1) % UInt32 for i in src_random]
-	
-	@btime copy_odds_branches!($dst, $src_random) seconds=1
-	@btime copy_odds_branches!($dst, $src_all_odd) seconds=1
-	nothing
+    src_random = rand(UInt32, 128)
+    dst = similar(src_random)
+    src_all_odd = [(2i+1) % UInt32 for i in src_random]
+
+    @btime copy_odds_branches!($dst, $src_random) seconds=1
+    @btime copy_odds_branches!($dst, $src_all_odd) seconds=1
+    nothing
 end
 
 # ╔═╡ e735a302-8af2-11eb-2ce7-01435b60fdd9
@@ -1091,12 +1091,12 @@ end;
 
 # ╔═╡ ee579dca-8af2-11eb-140f-a96778b7b39f
 let
-	dst = rand(UInt32, 2^18)
-	src_random = rand(UInt32, 2^18)
-	src_all_odd = [(2*i+1) % UInt32 for i in src_random]
-	@btime copy_odds_branchless!($dst, $src_random) seconds=1
-	@btime copy_odds_branchless!($dst, $src_all_odd) seconds=1
-	nothing
+    dst = rand(UInt32, 2^18)
+    src_random = rand(UInt32, 2^18)
+    src_all_odd = [(2*i+1) % UInt32 for i in src_random]
+    @btime copy_odds_branchless!($dst, $src_random) seconds=1
+    @btime copy_odds_branchless!($dst, $src_all_odd) seconds=1
+    nothing
 end
 
 # ╔═╡ f969eed2-8af2-11eb-1e78-5b322a7f4ebd
@@ -1117,14 +1117,14 @@ Let's look at the assembly code. Here, I've just cut out the assembly for the lo
 For the branch-ful version, we have:
 ```julia
 1 L48:
-2 	incq	%rsi
-3 	cmpq	%rsi, %r9
-4 	je	L75
+2     incq	%rsi
+3     cmpq	%rsi, %r9
+4     je	L75
 5 L56:
-6 	movq	(%rdx,%rsi,8), %rcx
-7 	testb	$1, %cl
-8 	je	L48
-9 	movq	%rcx, -8(%r8,%rdi,8)
+6     movq	(%rdx,%rsi,8), %rcx
+7     testb	$1, %cl
+8     je	L48
+9     movq	%rcx, -8(%r8,%rdi,8)
 10	incq	%rdi
 11	jmp	L48
 ```
@@ -1168,20 +1168,20 @@ What if we do this?
 
 # ╔═╡ 7732b6d8-8dab-11eb-0bc2-19690386ec27
 function read_indices(dst::Vector{T}, src::Vector{T}) where {T <: Integer}
-	i = 1
-	while i ≤ lastindex(src) - 1
-		i = src[i] + 1
-		dst[i] = i
-	end
-	return dst
+    i = 1
+    while i ≤ lastindex(src) - 1
+        i = src[i] + 1
+        dst[i] = i
+    end
+    return dst
 end;
 
 # ╔═╡ 29463b02-8dab-11eb-0bf5-23a3f4075b32
 let
-	dst = rand(UInt32, 2^18)
-	src = UInt32.(eachindex(dst))
-	@btime read_indices($dst, $src) seconds=1
-	nothing
+    dst = rand(UInt32, 2^18)
+    src = UInt32.(eachindex(dst))
+    @btime read_indices($dst, $src) seconds=1
+    nothing
 end
 
 # ╔═╡ a5d93434-8dac-11eb-34bf-91061089f0ef
@@ -1249,10 +1249,10 @@ end;
 
 # ╔═╡ 2192c228-8af3-11eb-19d8-81db4f3c0d81
 let
-	parallel_sleep(1); # run once to compile it
-	for njobs in (1, 4, 8, 16, 32)
-		@time parallel_sleep(njobs);
-	end
+    parallel_sleep(1); # run once to compile it
+    for njobs in (1, 4, 8, 16, 32)
+        @time parallel_sleep(njobs);
+    end
 end
 
 # ╔═╡ 2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
@@ -1275,35 +1275,35 @@ First, let's see a non-parallel solution:
 
 # ╔═╡ 316e5074-8af3-11eb-256b-c5b212f7e0d3
 begin
-	const SHIFT = Complex{Float32}(-0.221, -0.713)
+    const SHIFT = Complex{Float32}(-0.221, -0.713)
 
-	f(z::Complex) = z^2 + SHIFT
+    f(z::Complex) = z^2 + SHIFT
 
-	"Set the brightness of a particular pixel represented by a complex number"
-	function mandel(z)
-		n = 0
-		while ((abs2(z) < 4) & (n < 255))
-			n += 1
-			z = f(z)
-		end
-		return n
-	end
+    "Set the brightness of a particular pixel represented by a complex number"
+    function mandel(z)
+        n = 0
+        while ((abs2(z) < 4) & (n < 255))
+            n += 1
+            z = f(z)
+        end
+        return n
+    end
 
-	"Set brightness of pixels in one column of pixels"
-	function fill_column!(M::Matrix, x, real)
-		for (y, im) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 1)))
-			M[y, x] = mandel(Complex{Float32}(real, im))
-		end
-	end
+    "Set brightness of pixels in one column of pixels"
+    function fill_column!(M::Matrix, x, real)
+        for (y, im) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 1)))
+            M[y, x] = mandel(Complex{Float32}(real, im))
+        end
+    end
 
-	"Create a Julia fractal image"
-	function julia_single_threaded()
-		M = Matrix{UInt8}(undef, 5000, 5000)
-		for (x, real) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 2)))
-			fill_column!(M, x, real)
-		end
-		return M
-	end
+    "Create a Julia fractal image"
+    function julia_single_threaded()
+        M = Matrix{UInt8}(undef, 5000, 5000)
+        for (x, real) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 2)))
+            fill_column!(M, x, real)
+        end
+        return M
+    end
 end;
 
 # ╔═╡ 37cd1f1c-8ee9-11eb-015c-ade9efc27708
@@ -1317,26 +1317,26 @@ md"That took around 2 seconds on my computer. Now for a parallel one:"
 
 # ╔═╡ 3e1c4090-8af3-11eb-33d0-b9c299fef20d
 begin
-	function recursive_fill_columns!(M::Matrix, cols::UnitRange)
-		F, L = first(cols), last(cols)
-		# If only one column, fill it using fill_column!
-		if F == L
-			r = range(-1.0f0,1.0f0,length=size(M, 1))[F]
-			fill_column!(M, F, r)
-		# Else divide the range of columns in two, spawning a new task for each half
-		else
-			mid = div(L+F,2)
-			p = Threads.@spawn recursive_fill_columns!(M, F:mid)
-			recursive_fill_columns!(M, mid+1:L)
-			wait(p)
-		end
-	end
+    function recursive_fill_columns!(M::Matrix, cols::UnitRange)
+        F, L = first(cols), last(cols)
+        # If only one column, fill it using fill_column!
+        if F == L
+            r = range(-1.0f0,1.0f0,length=size(M, 1))[F]
+            fill_column!(M, F, r)
+        # Else divide the range of columns in two, spawning a new task for each half
+        else
+            mid = div(L+F,2)
+            p = Threads.@spawn recursive_fill_columns!(M, F:mid)
+            recursive_fill_columns!(M, mid+1:L)
+            wait(p)
+        end
+    end
 
-	function julia_multi_threaded()
-		M = Matrix{UInt8}(undef, 5000, 5000)
-		recursive_fill_columns!(M, 1:size(M, 2))
-		return M
-	end
+    function julia_multi_threaded()
+        M = Matrix{UInt8}(undef, 5000, 5000)
+        recursive_fill_columns!(M, 1:size(M, 2))
+        return M
+    end
 end;
 
 # ╔═╡ 4be905b4-8af3-11eb-0344-dbdc7e94ddf3
