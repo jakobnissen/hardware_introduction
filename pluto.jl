@@ -814,7 +814,7 @@ begin
 end;
 
 # ╔═╡ 2dc4f936-8af2-11eb-1117-9bc10e619ec6
-md"We can verify it works by checking the assembly of the function, which should contain only a single `vaesenc` instruction, as well as the `retq` (return) and the `nopw` (do nothing, used as a filler to align the CPU instructions in memory) instruction:"
+md"(Thanks to Kristoffer Carlsson for [the example](http://kristofferc.github.io/post/intrinsics/)). We can verify it works by checking the assembly of the function, which should contain only a single `vaesenc` instruction, as well as the `retq` (return) and the `nopw` (do nothing, used as a filler to align the CPU instructions in memory) instruction:"
 
 # ╔═╡ 76a4e83c-8af2-11eb-16d7-75eaabcb21b6
 @code_native aesenc(__m128i((1, 1)), __m128i((1, 1)))
