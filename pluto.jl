@@ -292,7 +292,7 @@ The following table measures time in clock cycles:
 |integer division        | 50 | 40
 
 
-The `lea` instruction takes three inputs, A, B and C, where A must be 2, 4, or 8, and calculates AB + C. We'll come back to what the "vector" instructions do later.
+The `lea` instruction takes three inputs, A, B and C, where A must be 1, 2, 4, or 8, and calculates AB + C. We'll come back to what the "vector" instructions do later.
 
 For comparison, we may also add some *very rough* estimates of other sources of delays:
 
