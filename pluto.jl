@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.3
+# v0.19.11
 
 using Markdown
 using InteractiveUtils
@@ -129,7 +129,7 @@ Effective use of the cache comes down to *locality*, temporal and spacial locali
 * By *temporal locality*, I mean that data you recently accessed likely resides in cache already. Therefore, if you must access a piece of memory multiple times, make sure you do it close together in time.
 * By *spacial locality*, I mean that you should access data from memory addresses close to each other. Your CPU does not copy *just* the requested bytes to cache. Instead, your CPU will always copy data in larger chunks called *cache lines* (usually 512 consecutive bits, depending on the CPU model).
 
-To illustrate this, let's compare the performance of the `random_access` function above when it's run on a short (8 KiB) vector, compared to a long (16 MiB) one. The first one is small enough that after just a few accessions, all the data has been copied to cache. The second is so large that new indexing causes cache misses most of the time. 
+To illustrate this, let's compare the performance of the `random_access` function above when it's run on a short (8 KiB) vector, compared to a long (16 MiB) one. The first one is small enough that after just a few accessions, all the data has been copied to cache. The second is so large that new indexing causes cache misses most of the time.
 
 Notice the large discrepancy in time spent - a difference of around 70x.
 """
@@ -318,8 +318,8 @@ end;
 md"However, modern compilers are pretty clever, and will often figure out the optimal instructions to use in your functions to obtain the same result, by for example replacing an integer divide `idivq` instruction with a bitshift right (`shrq`) where applicable to be faster. You need to check the assembly code yourself to see:"
 
 # ╔═╡ d376016a-8af0-11eb-3a15-4322759143d1
-# Calling it with debuginfo=:none removes the comments in the assembly code
-@code_native debuginfo=:none divide_slow(UInt(1))
+# Calling it with these keywords removes comments in the assembly code
+@code_native debuginfo=:none dump_module=false divide_slow(UInt(1))
 
 # ╔═╡ d70c56bc-8af0-11eb-1220-09e78dba26f7
 md"## Allocations and immutability
@@ -364,7 +364,7 @@ end;
 
 # ╔═╡ 22512ab2-8af1-11eb-260b-8d6c16762547
 md"""
-On my computer, the allocating function is more than 20x slower on average. Also note the high maximum time spend on the allocating function. This is due to a few properties of the code:
+On my computer, the allocating function is more than 15x slower on average. Also note the high maximum time spend on the allocating function. This is due to a few properties of the code:
 * First, the allocation itself takes time
 * Second, the allocated objects eventually have to be deallocated, also taking time
 * Third, repeated allocations triggers the GC to run, causing overhead
@@ -392,8 +392,6 @@ What does this mean in practice? In Julia, it means if you want fast stack-alloc
 * Your object must be created, used and destroyed in a fully compiled function so the compiler knows for certain when it needs to create, use and destroy the object. If the object is returned for later use (and not immediately returned to another, fully compiled function), we say that the object *escapes*, and must be allocated.
 * Your type must be limited in size. I don't know exactly how large it has to be, but 100 bytes is fine.
 * The exact memory layout of your type must be known by the compiler (it nearly always is).
-
-_Note: Earlier versions of this notebook mentioned that stack-allocated types in Julia also must be so-called bitstypes. This restriction was lifted in Julia 1.5_
 """
 
 # ╔═╡ 2a7c1fc6-8af1-11eb-2909-554597aa2949
@@ -413,13 +411,13 @@ end
 md"We can inspect the code needed to instantiate a `HeapAllocated` object with the code needed to instantiate a `StackAllocated` one:"
 
 # ╔═╡ 33350038-8af1-11eb-1ff5-6d42d86491a3
-@code_native HeapAllocated(1)
+@code_native debuginfo=:none dump_module=false HeapAllocated(1)
 
 # ╔═╡ 3713a8da-8af1-11eb-2cb2-1957455227d0
 md"Notice the `callq` instruction in the `HeapAllocated` one. This instruction calls out to other functions, meaning that in fact, much more code is really needed to create a `HeapAllocated` object that what is displayed. In constrast, the `StackAllocated` really only needs a few instructions:"
 
 # ╔═╡ 59f58f1c-8af1-11eb-2e88-997e9d4bcc48
-@code_native StackAllocated(1)
+@code_native debuginfo=:none dump_module=false StackAllocated(1)
 
 # ╔═╡ 5c86e276-8af1-11eb-2b2e-3386e6795f37
 md"
@@ -438,7 +436,7 @@ $$[CPU] ↔ [REGISTERS] ↔ [CACHE] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 To operate on data structures larger than one register, the data must be broken up into smaller pieces that fits inside the register. For example, when adding two 128-bit integers on my computer:"
 
 # ╔═╡ 7a88c4ba-8af1-11eb-242c-a1813a9e6741
-@code_native UInt128(5) + UInt128(11)
+@code_native debuginfo=:none dump_module=false UInt128(5) + UInt128(11)
 
 # ╔═╡ 7d3fcbd6-8af1-11eb-0441-2f88a9d59966
 md"""There is no register that can do 128-bit additions. First the lower 64 bits must be added using a `addq` instruction, fitting in a register. Then the upper bits are added with a `adcq` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
@@ -473,23 +471,22 @@ A good rule of thumb is that SIMD needs:
 * A loop with a predetermined length, so it knows when to stop, and
 * A loop with no branches (i.e. if-statements) in the loop
 
-In fact, even boundschecking, i.e. checking that you are not indexing outside the bounds of a vector, causes a branch. After all, if the code is supposed to raise a bounds error after 3 iterations, even a single SIMD operation would be wrong! To achieve SIMD vectorization then, all boundschecks must be disabled. We can use this do demonstrate the impact of SIMD:"""
+In fact, even boundschecking, i.e. checking that you are not indexing outside the bounds of a vector, causes a branch. After all, if the code is supposed to raise a bounds error after 3 iterations, even a single SIMD operation would be wrong! To achieve SIMD vectorization then, all boundschecks must be disabled.
+
+Fortunately, in the latest versions of Julia, the compiler has been pretty smart at figuring out when it can SIMD even when boundschecking.
+
+To demonstrate the significant impact of SIMDd, we can use a function that uses an input function to break a loop. We can then compare the speed of the function when given a function that the compiler knows will never break the loop and so can SIMDd, with a function that might break the loop."""
 
 # ╔═╡ 94182f88-8af1-11eb-207a-37083c1ead68
 begin
-    function sum_boundscheck(x::Vector)
+	# The loop in the function breaks if pred(x[i])
+	# returns `true`, and therefore cannot be SIMDd
+    function sum_predicate(pred, x::Vector)
         n = zero(eltype(x))
         for i in eachindex(x)
-            n += x[i]
-        end
-        return n
-    end
-
-    function sum_inbounds(x::Vector)
-        n = zero(eltype(x))
-        # By removing the boundscheck, we allow automatic SIMD
-        @inbounds for i in eachindex(x)
-            n += x[i]
+			y = x[i]
+			pred(y) && break
+			n += y
         end
         return n
     end
@@ -604,7 +601,7 @@ end;
 # ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
 let
     data = rand(UInt, 2^24)
-    @time test_file("../alen/Cargo.lock")
+    @time test_file("../alen/src/main.rs")
     @time random_access(data, 1000000)
     nothing
 end
@@ -714,7 +711,7 @@ let
     # Create a tuple of 8 32-bit integers.
     # could also have created 4 64-bit numbers etc.
     numbers = ntuple(i -> rand(UInt32), 8)
-    @code_native debuginfo=:none add_tuple(numbers, numbers)
+    @code_native debuginfo=:none dump_module=false add_tuple(numbers, numbers)
     nothing
 end
 
@@ -722,23 +719,30 @@ end
 let
     # Make sure the vector is small so we don't time cache misses
     data = rand(UInt64, 4096)
-    @btime sum_boundscheck($data) seconds=1
-    @btime sum_inbounds($data) seconds=1
+
+	# For a function that always returns false, the compiler
+	# knows it can never break, and so will SIMD
+    @btime sum_predicate(Returns(false), $data) seconds=1
+
+	# This function has a 1/2^64 risk of returning true;
+	# while practically impossible, the compiler cannot
+	# guarantee it won't break the loop, and so will not SIMD
+    @btime sum_predicate(iszero, $data) seconds=1
     nothing
 end
 
 # ╔═╡ cc99d9ce-8af1-11eb-12ec-fbd6df3becc8
 let
     data = rand(Float64, 4096)
-    @btime sum_boundscheck($data) seconds=1
-    @btime sum_inbounds($data) seconds=1
+    @btime sum_predicate(Returns(false), $data) seconds=1
+    @btime sum_predicate(iszero, $data) seconds=1
     nothing
 end
 
 # ╔═╡ e8d2ec8e-8af1-11eb-2018-1fa4df5b47ad
 let
     data = rand(Float64, 4096)
-    @btime sum_inbounds($data) seconds=1
+    @btime sum_predicate(Returns(false), $data) seconds=1
     @btime sum_simd($data) seconds=1
     nothing
 end
@@ -817,7 +821,9 @@ end;
 md"(Thanks to Kristoffer Carlsson for [the example](http://kristofferc.github.io/post/intrinsics/)). We can verify it works by checking the assembly of the function, which should contain only a single `vaesenc` instruction, as well as the `retq` (return) and the `nopw` (do nothing, used as a filler to align the CPU instructions in memory) instruction:"
 
 # ╔═╡ 76a4e83c-8af2-11eb-16d7-75eaabcb21b6
-@code_native aesenc(__m128i((1, 1)), __m128i((1, 1)))
+@code_native debuginfo=:none dump_module=false aesenc(
+	__m128i((1, 1)), __m128i((1, 1))
+)
 
 # ╔═╡ 797264de-8af2-11eb-0cb0-adf3fbc95c90
 md"""Algorithms which makes use of specialized instructions can be extremely fast. [In a blog post](https://mollyrocket.com/meowhash), the video game company Molly Rocket unveiled a new non-cryptographic hash function using AES instructions which reached unprecedented speeds."""
@@ -840,7 +846,7 @@ However, if we show the assembly of this function:
 call_plus(x) = x + 1;
 
 # ╔═╡ 93af6754-8af2-11eb-0fe6-216d76e683de
-@code_native debuginfo=:none call_plus(1)
+@code_native debuginfo=:none dump_module=false call_plus(1)
 
 # ╔═╡ a105bd68-8af2-11eb-31f6-3335b4fb0f08
 md"""
@@ -959,12 +965,12 @@ let
     # any: Stops as soon as it finds a `true`
     @btime any($data) seconds=1
 
-    # reduce: Loops over all values in the array
-    @btime reduce(|, $data) seconds=1
+    # foldl: Loops over all values in the array
+    @btime foldl(|, $data) seconds=1
 
     data[1] = true
     @btime any($data) seconds=1
-    @btime reduce(|, $data) seconds=1
+    @btime foldl(|, $data) seconds=1
     nothing
 end
 
@@ -999,7 +1005,7 @@ end;
 # ╔═╡ d4a43094-8eeb-11eb-106f-3b54253aa663
 let
     data = fill(false, 2^20)
-    @btime reduce(|, $data) seconds=1
+    @btime foldl(|, $data) seconds=1
     @btime unroll_compromise($data) seconds=1
 
     data[1] = true
@@ -1214,7 +1220,7 @@ md"""
 ## Multithreading
 In the bad old days, CPU clock speed would increase every year as new processors were brought onto the market. Partially because of heat generation, this acceleration slowed down once CPUs hit the 3 GHz mark. Now we see only minor clock speed increments every processor generation. Instead of raw speed of execution, the focus has shifted on getting more computation done per clock cycle. CPU caches, CPU pipelining (i.e. the entire re-order buffer "workflow"), branch prediction and SIMD instructions are all important contibutions in this area, and have all been covered here.
 
-Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel. Furthermore, many CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a branch misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors. 
+Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel. Furthermore, many CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a branch misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors.
 
 Hyperthreading only really matters when your threads are sometimes prevented from doing work. Besides CPU-internal causes like cache misses, a thread can also be paused because it is waiting for an external resource like a webserver or data from a disk. If you are writing a program where some threads spend a significant time idling, the core can be used by the other thread, and hyperthreading can show its value.
 
@@ -1229,11 +1235,14 @@ Threads.nthreads()
 function half_asleep(start::Bool)
     a, b = 1, 0
     for iteration in 1:5
-        start && sleep(0.06)
-        for i in 1:100000000
-            a, b = a + b, a
+        start && sleep(0.1)
+		t1 = time()
+		while time() - t1 < 0.1
+			for i in 1:100000
+            	a, b = a + b, a
+			end
         end
-        start || sleep(0.06)
+        start || sleep(0.1)
     end
     return a
 end;
@@ -1307,7 +1316,7 @@ begin
 end;
 
 # ╔═╡ 37cd1f1c-8ee9-11eb-015c-ade9efc27708
-@code_native f()
+@code_native debuginfo=:none dump_module=false f()
 
 # ╔═╡ 39a85a58-8af3-11eb-1334-6f50ed9acd31
 @time julia_single_threaded();
@@ -1375,7 +1384,7 @@ PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 
 [compat]
 BenchmarkTools = "~1.1.3"
-PlutoUI = "~0.7.38"
+PlutoUI = "~0.7.39"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -1390,6 +1399,7 @@ version = "1.1.4"
 
 [[ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
+version = "1.1.1"
 
 [[Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -1405,21 +1415,26 @@ version = "1.1.4"
 
 [[ColorTypes]]
 deps = ["FixedPointNumbers", "Random"]
-git-tree-sha1 = "024fe24d83e4a5bf5fc80501a314ce0d1aa35597"
+git-tree-sha1 = "eb7f0f8307f71fac7c606984ea5fb2817275d6e4"
 uuid = "3da002f7-5984-5a60-b8a6-cbb66c0b333f"
-version = "0.11.0"
+version = "0.11.4"
 
 [[CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
+version = "0.5.2+0"
 
 [[Dates]]
 deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
 
 [[Downloads]]
-deps = ["ArgTools", "LibCURL", "NetworkOptions"]
+deps = ["ArgTools", "FileWatching", "LibCURL", "NetworkOptions"]
 uuid = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
+version = "1.6.0"
+
+[[FileWatching]]
+uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 
 [[FixedPointNumbers]]
 deps = ["Statistics"]
@@ -1434,9 +1449,10 @@ uuid = "47d2ed2b-36de-50cf-bf87-49c2cf4b8b91"
 version = "0.0.4"
 
 [[HypertextLiteral]]
-git-tree-sha1 = "2b078b5a615c6c0396c77810d92ee8c6f470d238"
+deps = ["Tricks"]
+git-tree-sha1 = "c47c5fa4c5308f27ccaac35504858d8914e102f9"
 uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
-version = "0.9.3"
+version = "0.9.4"
 
 [[IOCapture]]
 deps = ["Logging", "Random"]
@@ -1450,17 +1466,19 @@ uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 
 [[JSON]]
 deps = ["Dates", "Mmap", "Parsers", "Unicode"]
-git-tree-sha1 = "8076680b162ada2a031f707ac7b4953e30667a37"
+git-tree-sha1 = "3c837543ddb02250ef42f4738347454f95079d4e"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
-version = "0.21.2"
+version = "0.21.3"
 
 [[LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
 uuid = "b27032c2-a3e7-50c8-80cd-2d36dbcbfd21"
+version = "0.6.3"
 
 [[LibCURL_jll]]
 deps = ["Artifacts", "LibSSH2_jll", "Libdl", "MbedTLS_jll", "Zlib_jll", "nghttp2_jll"]
 uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
+version = "7.84.0+0"
 
 [[LibGit2]]
 deps = ["Base64", "NetworkOptions", "Printf", "SHA"]
@@ -1469,6 +1487,7 @@ uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
 [[LibSSH2_jll]]
 deps = ["Artifacts", "Libdl", "MbedTLS_jll"]
 uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
+version = "1.10.2+0"
 
 [[Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
@@ -1487,35 +1506,40 @@ uuid = "d6f4376e-aef5-505a-96c1-9c027394607a"
 [[MbedTLS_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
+version = "2.28.0+0"
 
 [[Mmap]]
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 
 [[MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
+version = "2022.2.1"
 
 [[NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
+version = "1.2.0"
 
 [[OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
 uuid = "4536629a-c528-5b80-bd46-f80d51c5b363"
+version = "0.3.20+0"
 
 [[Parsers]]
 deps = ["Dates"]
-git-tree-sha1 = "438d35d2d95ae2c5e8780b330592b6de8494e779"
+git-tree-sha1 = "3d5bf43e3e8b412656404ed9466f1dcbf7c50269"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
-version = "2.0.3"
+version = "2.4.0"
 
 [[Pkg]]
 deps = ["Artifacts", "Dates", "Downloads", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
 uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+version = "1.8.0"
 
 [[PlutoUI]]
 deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "Markdown", "Random", "Reexport", "UUIDs"]
-git-tree-sha1 = "670e559e5c8e191ded66fa9ea89c97f10376bb4c"
+git-tree-sha1 = "8d1f54886b9037091edf146b517989fc4a09efec"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-version = "0.7.38"
+version = "0.7.39"
 
 [[Printf]]
 deps = ["Unicode"]
@@ -1536,6 +1560,7 @@ version = "1.2.2"
 
 [[SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+version = "0.7.0"
 
 [[Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
@@ -1554,14 +1579,21 @@ uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 [[TOML]]
 deps = ["Dates"]
 uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+version = "1.0.0"
 
 [[Tar]]
 deps = ["ArgTools", "SHA"]
 uuid = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
+version = "1.10.0"
 
 [[Test]]
 deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[[Tricks]]
+git-tree-sha1 = "6bac775f2d42a611cdfcd1fb217ee719630c4175"
+uuid = "410a4b4d-49e4-4fbc-ab6d-cb71b17b3775"
+version = "0.1.6"
 
 [[UUIDs]]
 deps = ["Random", "SHA"]
@@ -1573,18 +1605,22 @@ uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 [[Zlib_jll]]
 deps = ["Libdl"]
 uuid = "83775a58-1f1d-513f-b197-d71354ab007a"
+version = "1.2.12+3"
 
 [[libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl", "OpenBLAS_jll"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
+version = "5.1.1+0"
 
 [[nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
+version = "1.48.0+0"
 
 [[p7zip_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
+version = "17.4.0+0"
 """
 
 # ╔═╡ Cell order:
