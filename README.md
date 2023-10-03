@@ -1,11 +1,10 @@
 # What scientists must know about hardware to write fast code
 
-This document is hosted at https://viralinstruction.com/posts/hardware/.
-An older, outdated version is hosted at https://biojulia.net/.
+This document is hosted at https://viralinstruction.com/posts/hardware/
 
 It is written as a [Pluto notebook](https://github.com/fonsp/Pluto.jl). If you can, I recommend running the code in a Pluto notebook so you can play around with it and learn. Alternatively, you can read the HTML file in your browser.
 
-PR's (to the notebook file!) are welcome.
+PR's are welcome.
 
 ### This notebook covers:
 * Why you must limit your disk read/writes
@@ -13,7 +12,7 @@ PR's (to the notebook file!) are welcome.
 * Memory alignment
 * How to read assembly code and why you must do it
 * Why you should reduce allocations
-* Why immutable datastructures ususally are fastest
+* Why immutable datastructures usually are fastest
 * SIMD vectorization
 * Struct of arrays vs array of structs
 * Specialized CPU instructions
