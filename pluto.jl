@@ -19,7 +19,7 @@ md"""
 
 Programming is used in many fields of science today, where individual scientists often have to write custom code for their own projects. For most scientists, however, computer science is not their field of expertise; They have learned programming by necessity. I count myself as one of them. While we may be reasonably familiar with the *software* side of programming, we rarely have even a basic understanding of how computer *hardware* impacts code performance.
 
-The aim of this tutorial is to give non-professional programmers a *brief* overview of the features of modern hardware that you must understand in order to write fast code. It will be a distillation of what have learned the last few years. This tutorial will use Julia because it allows these relatively low-level considerations to be demonstrated easily in a high-level, interactive language.
+The aim of this tutorial is to give non-professional programmers a *brief* overview of the features of modern hardware that you must understand in order to write fast code. It will be a distillation of what I have learned over the last few years. This tutorial will use Julia because it allows these relatively low-level considerations to be demonstrated easily in a high-level, interactive language.
 
 ## What this notebook is not
 #### This is not a guide to the Julia programming language
@@ -28,11 +28,11 @@ To write fast code, you must first understand your programming language and its 
 #### This is not an explanation of specific data structures or algorithms
 Besides knowing your language, you must also know your own code to make it fast. You must understand the idea behind big-O notation, why some algorithms are faster than others, and how different data structures work internally. Without knowing *what an `Array` is*, how could you possibly optimize code making use of arrays?
 
-This too, is outside the scope of this paper. However, I would say that as a minimum, a programmer should have an understanding of:
+This too, is outside the scope of this tutorial. However, I would say that as a minimum, a programmer should have an understanding of:
 
 * How a binary integer is represented in memory
 * How a floating point number is represented in memory (learning this is also necessary to understand computational inaccuracies from floating point operations, which is a must when doing scientific programming)
-* The memory layout of a `String` including ASCII and UTF-8 encoding
+* The memory layout of a `String`, including ASCII and UTF-8 encodings
 * The basics of how an `Array` is structured, and what the difference between a dense array of e.g. integers and an array of references to objects are
 * The principles behind how a `Dict` (i.e. hash table) and a `Set` works
 
@@ -91,7 +91,7 @@ Or, imagine a situation with an operation with a latency of 1 second, but where 
 
 One place where it's useful to distinguish between latency and throughput is when programs read from the disk. Most modern computers use a type of disk called a *solid state drive (SSD)*. In round numbers, current (2021) SSD's have latencies around 100 µs, and read/write throughputs of well over 1 GB/s. Older, or cheaper mass-storage disks are of the *hard disk drive (HDD)* type. These have latencies 100 times larger, at near 10 ms, and 10 times lower throughput of 100 MB/s.
 
-Even the latest, fastest SSDs has latencies thousands of times slower than RAM, whose latency is below 100 nanoseconds. Disk latency is incurred whenever a read or write happen. To write fast code, you must therefore at all costs avoid repeatedly reading from, or writing to disk.
+Even the latest, fastest SSDs have latencies thousands of times slower than RAM, whose latency is below 100 nanoseconds. Disk latency is incurred whenever a read or write happens. To write fast code, you must therefore at all costs avoid repeatedly reading from, or writing to disk.
 
 The following example serves to illustrate the difference in latency: The first function opens a file, accesses one byte from the file, and closes it again. The second function randomly accesses 1,000,000 integers from RAM.
 """
@@ -106,7 +106,7 @@ On my computer, finding a single byte in a file (including opening and closing t
 
 Only a few years back, SSDs were uncommon and HDD throughput was lower than today. Therefore, old texts will often warn people not to have your program depend on the disk at all for high throughput. That advice is mostly outdated today, as most programs are incapable of bottlenecking at the throughput of even cheap, modern SSDs of 1 GB/s. The advice today still stands only for programs that need *frequent* individual reads/writes to disk, where the high *latency* accumulates. In these situations, you should indeed keep your data in RAM.
 
-The worst case for performance is if you need to read/write a large file in tiny chunks, for example one single byte at a time. In these situations, great speed improvements can be found by *buffering* the file. When  buffering, you read in larger chunks, the *buffer*, to memory, and when you want to read from the file, you check if it's in the buffer. If not, read another large chunk into your buffer from the file. This approach minimizes disk latency. Both your operating system and your programming language will make use of caches, however, sometimes [it is necessary to manually buffer your files](https://github.com/JuliaLang/julia/issues/34195).
+The worst case for performance is if you need to read/write a large file in tiny chunks, for example one single byte at a time. In these situations, great speed improvements can be found by *buffering* the file. When  buffering, you read in larger chunks – the *buffer* – to memory, and when you want to read from the file, you check if it's in the buffer. If not, read another large chunk into your buffer from the file. This approach minimizes disk latency. Both your operating system and your programming language will make use of caches, however, sometimes [it is necessary to manually buffer your files](https://github.com/JuliaLang/julia/issues/34195).
 
 """
 
@@ -119,7 +119,7 @@ On this scale, reading from RAM takes around 500 clock cycles. Similarly to how 
 
 $$[CPU] ↔ [CPU CACHE] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
-When the CPU requests a piece of data from the RAM, say a single byte, it will first check if the memory is already in cache. If so, it will read it from there. This is much faster, usually just one or a few clock cycles, than access to RAM. If not, we have a *cache miss*, where your program will stall for around 100 nanoseconds while your computer copies data from RAM into the cache.
+When the CPU requests a piece of data from the RAM, say a single byte, it will first check if the memory is already in cache. If so, it will read it from there. This is much faster – usually just one or a few clock cycles – than access to RAM. If not, we have a *cache miss*, where your program will stall for around 100 nanoseconds while your computer copies data from RAM into the cache.
 
 It is not possible, except in very low-level languages, to manually manage the CPU cache. Instead, you must make sure to use your cache effectively.
 
@@ -129,7 +129,7 @@ Effective use of the cache comes down to *locality*, temporal and spacial locali
 * By *temporal locality*, I mean that data you recently accessed likely resides in cache already. Therefore, if you must access a piece of memory multiple times, make sure you do it close together in time.
 * By *spacial locality*, I mean that you should access data from memory addresses close to each other. Your CPU does not copy *just* the requested bytes to cache. Instead, your CPU will always copy data in larger chunks called *cache lines* (usually 512 consecutive bits, depending on the CPU model).
 
-To illustrate this, let's compare the performance of the `random_access` function above when it's run on a short (8 KiB) vector, compared to a long (16 MiB) one. The first one is small enough that after just a few accessions, all the data has been copied to cache. The second is so large that new indexing causes cache misses most of the time.
+To illustrate this, let's compare the performance of the `random_access` function above when it's run on a short (8 KiB) vector, compared to a long (16 MiB) one. The first one is small enough that after just a few accesses, all the data has been copied to cache. The second is so large that new indexing causes cache misses most of the time.
 
 Notice the large discrepancy in time spent - a difference of around 70x.
 """
@@ -152,7 +152,7 @@ Surprise! The linear access pattern is more than 20 times faster! How can that b
 
 Next to the cache of the CPU lies a small circuit called the *prefetcher*. This electronic circuit collects data on which memory is being accessed by the CPU, and looks for patterns. When it detects a pattern, it will *prefetch* whatever data it predicts will soon be accessed, so that it already resides in cache when the CPU requests the data.
 
-Our function `linear_access`, depite having worse *cache usage* than *random_access*, fetched the data in a completely predictable pattern, which allowed the prefetcher to do its job.
+Our function `linear_access`, despite having worse *cache usage* than *random_access*, fetched the data in a completely predictable pattern, which allowed the prefetcher to do its job.
 
 In summary, we have seen that
 * A *cache miss* incurs a penalty equivalent to roughly 500 CPU operations, so is absolutely critical for performance to avoid these
@@ -172,7 +172,7 @@ md"""
 ## Keep your data aligned to memory
 As just mentioned, your CPU will move entire cache lines of usually 512 consecutive bits (64 bytes) to and from main RAM to cache at a time. Your entire main memory is segmented into cache lines. For example, memory addresses 0 to 63 is one cache line, addresses 64 to 127 is the next, 128 to 191 the next, et cetera. Your CPU may only request one of these cache lines from memory, and not e.g. the 64 bytes from address 30 to 93.
 
-This means that some data structures can straddle the boundaries between cache lines. If I request a 64-bit (8 byte) integer at adress 60, the CPU must first generate two memory requests from the single requested memory address (namely to get cache lines 0-63 and 64-127), and then retrieve the integer from both cache lines, wasting time.
+This means that some data structures can straddle the boundaries between cache lines. If I request a 64-bit (8 byte) integer at address 60, the CPU must first generate two memory requests from the single requested memory address (namely to get cache lines 0-63 and 64-127), and then retrieve the integer from both cache lines, wasting time.
 
 The time wasted can be significant. In a situation where in-cache memory access proves the bottleneck, the slowdown can approach 2x. In the following example, I use a pointer to repeatedly access an array at a given offset from a cache line boundary. If the offset is in the range `0:56`, the integers all fit within one single cache line, and the function is fast. If the offset is in `57:63` all integers will straddle cache lines.
 """
@@ -200,7 +200,7 @@ md"Then we can use Julia's introspection to get the relative position of each of
 # ╔═╡ d4c8c38c-8ee6-11eb-0b49-33fbfbd214f3
 let
     T = AlignmentTest
-    println("Size of $T: ", sizeof(T), "bytes")
+    println("Size of $T: ", sizeof(T), " bytes")
     for fieldno in 1:fieldcount(T)
         print("Name: ", fieldname(T, fieldno), '\t')
         print("Size: ", sizeof(fieldtype(T, fieldno)), '\t')
@@ -249,7 +249,7 @@ The lines beginning with `;` are comments, and explain which section of the code
 
 The next two columns in the instruction, `24(%rdi)` and `%rax` are the arguments to `movq`. These are the names of the registers (we will return to registers later) where the data to operate on are stored.
 
-You can also see (in the larger display of assembly code) that the code is segmented into sections beginning with a name starting with "L", for example, when I ran it, there's a section `L32`. These sections are jumped between using if-statements, or *branches*. Here, section `L32` marks the actual loop. You can see the following two instructions in the `L32` section:
+You can also see (in the larger display of assembly code) that the code is segmented into sections beginning with a name starting with "L". For example, when I ran it, there's a section `L32`. These sections are jumped between using if-statements, or *branches*. Here, section `L32` marks the actual loop. You can see the following two instructions in the `L32` section:
 
 ```
 ; ││┌ @ promotion.jl:401 within `=='
@@ -258,7 +258,7 @@ You can also see (in the larger display of assembly code) that the code is segme
      jne     L32
 ```
 
-The first instruction `cmpq` (compare quad) compares the data in registry `rdi`, which hold the data for the number of iterations left (plus one), with the number 1, and sets certain flags (wires) in the CPU based on the result. The next instruction `jne` (jump if not equal) makes a jump if the "equal" flag is not set in the CPU, which happens if there is one or more iterations left. You can see it jumps to `L32`, meaning this section repeat.
+The first instruction `cmpq` (compare quad) compares the data in registry `rdi`, which holds the number of iterations left (plus one), with the number 1, and sets certain flags (wires) in the CPU based on the result. The next instruction `jne` (jump if not equal) makes a jump if the "equal" flag is not set in the CPU, which happens if there is one or more iterations left. You can see it jumps to `L32`, meaning this section repeats in that case.
 """
 
 # ╔═╡ b73b5eaa-8af0-11eb-191f-cd15de19bc38
@@ -342,12 +342,12 @@ md"Then there is no way to get the original array `[1,2,3]` back, it is unreacha
 GC.gc()
 
 # ╔═╡ ecfd04e4-8af0-11eb-0962-f548d2eabad3
-md"The following example illustrates the difference in time spent in a function that allocates a vector with the new result relative to one which simply modifies the vector, allocating nothing:"
+md"The following example illustrates the difference in time spent in a function that allocates a vector with the new result, relative to one which simply modifies the vector and thus allocating nothing:"
 
 # ╔═╡ f0e24b50-8af0-11eb-1a0e-5d925f3743e0
 begin
     function increment(x::Vector{<:Integer})
-        y = similar(x)
+        y = similar(x) # allocating a new vector
         @inbounds for i in eachindex(x)
             y[i] = x[i] + 1
         end
@@ -364,10 +364,10 @@ end;
 
 # ╔═╡ 22512ab2-8af1-11eb-260b-8d6c16762547
 md"""
-On my computer, the allocating function is more than 15x slower on average. Also note the high maximum time spend on the allocating function. This is due to a few properties of the code:
+On my computer, the allocating function is more than 15x slower on average. Also note the high maximum time spent on the allocating function. This is due to a few properties of the code:
 * First, the allocation itself takes time
 * Second, the allocated objects eventually have to be deallocated, also taking time
-* Third, repeated allocations triggers the GC to run, causing overhead
+* Third, repeated allocations trigger the GC to run, causing overhead
 * Fourth, more allocations sometimes means less efficient cache use because you are using more memory
 
 Note that I used the mean time instead of the median, since for this function the GC only triggers approximately every 30'th call, but it consumes 30-40 µs when it does. All this means performant code should keep allocations to a minimum.
@@ -379,12 +379,12 @@ Inside RAM, data is kept on either the *stack* or the *heap*. The stack is a sim
 
 Intuitively, it may seem obvious that all objects need to be placed in RAM, must be able to be retrieved and deleted at any time by the program, and therefore need to be allocated on the heap. And for some languages, like Python, this is true. However, this is not true in Julia and other efficient, compiled languages. Integers, for example, can often be placed on the stack.
 
-Why do some objects need to be heap allocated, while others can be stack allocated? To be stack-allocated, the compiler needs to know for certain that:
+Why do some objects need to be heap-allocated, while others can be stack-allocated? To be stack-allocated, the compiler needs to know for certain that:
 
 * The object is a reasonably small size, so it fits on the stack. For technical reasons, the stack can't just be hundreds of megabytes in size.
 * The compiler can predict exactly *when* it needs to create and destroy the object so it can destroy it timely by simply popping the stack (similar to calling `pop!` on a `Vector`). This is usually the case for local variables in compiled languages.
 
-Julia has even more constrains on stack-allocated objects.
+Julia has even more constraints on stack-allocated objects.
 * The object should have a fixed size known at compile time.
 * The compiler must know that object never changes. The CPU is free to copy stack-allocated objects, and for immutable objects, there is no way to distinguish a copy from the original. This bears repeating: *With immutable objects, there is no way to distinguish a copy from the original*. This gives the compiler and the CPU certain freedoms when operating on it. The latter point is also why objects are immutable by default in Julia, and leads to one other performance tip: Use immutable objects wherever possible.
 
@@ -433,15 +433,15 @@ It is time yet again to update our simplified computer schematic. A CPU operates
 
 $$[CPU] ↔ [REGISTERS] ↔ [CACHE] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
-To operate on data structures larger than one register, the data must be broken up into smaller pieces that fits inside the register. For example, when adding two 128-bit integers on my computer:"
+To operate on data structures larger than one register, the data must be broken up into smaller pieces that fit inside a register. For example, when adding two 128-bit integers on my computer:"
 
 # ╔═╡ 7a88c4ba-8af1-11eb-242c-a1813a9e6741
 @code_native debuginfo=:none dump_module=false UInt128(5) + UInt128(11)
 
 # ╔═╡ 7d3fcbd6-8af1-11eb-0441-2f88a9d59966
-md"""There is no register that can do 128-bit additions. First the lower 64 bits must be added using a `addq` instruction, fitting in a register. Then the upper bits are added with a `adcq` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
+md"""There is no register that can do 128-bit additions. So first, the lower 64 bits must be added using a `addq` instruction, fitting in a register. Then the upper bits are added with a `adcq` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
 
-The small size of the registers serves as a bottleneck for CPU throughput: It can only operate on one integer/float at a time. In order to sidestep this, modern CPUs contain specialized 256-bit registers (or 128-bit in older CPUs, or 512-bit in the brand new ones) than can hold 4 64-bit integers/floats at once, or 8 32-bit integers, etc. Confusingly, the data in such wide registers are termed "vectors." The CPU have access to instructions that can perform various CPU operations on vectors, operating on 4 64-bit integers in one instruction. This is called "single instruction, multiple data," *SIMD*, or *vectorization*. Notably, a 4x64 bit operation is *not* the same as a 256-bit operation, e.g. there is no carry-over with between the 4 64-bit integers when you add two vectors. Instead, a 256-bit vector operation is equivalent to 4 individual 64-bit operations.
+The small size of the registers serves as a bottleneck for CPU throughput: it can only operate on one integer/float at a time. In order to sidestep this, modern CPUs contain specialized 256-bit registers (or 128-bit in older CPUs, or 512-bit in the brand new ones) than can hold 4 64-bit integers/floats at once, or 8 32-bit integers, etc. Confusingly, the data in such wide registers are termed "vectors." The CPU have access to instructions that can perform various CPU operations on vectors, operating on 4 64-bit integers in one instruction. This is called "single instruction, multiple data," *SIMD*, or *vectorization*. Notably, a 4x64 bit operation is *not* the same as a 256-bit operation, e.g. there is no carry-over with between the 4 64-bit integers when you add two vectors. Instead, a 256-bit vector operation is equivalent to 4 individual 64-bit operations.
 
 We can illustrate this with the following example:"""
 
@@ -475,7 +475,7 @@ In fact, even boundschecking, i.e. checking that you are not indexing outside th
 
 Fortunately, in the latest versions of Julia, the compiler has been pretty smart at figuring out when it can SIMD even when boundschecking.
 
-To demonstrate the significant impact of SIMDd, we can use a function that uses an input function to break a loop. We can then compare the speed of the function when given a function that the compiler knows will never break the loop and so can SIMDd, with a function that might break the loop."""
+To demonstrate the significant impact of SIMD, we can use a function that uses an input function to break a loop. We can then compare the speed between: (1) a function that the compiler knows will never break the loop and so can use SIMD, and (2) a function that might break the loop."""
 
 # ╔═╡ 94182f88-8af1-11eb-207a-37083c1ead68
 begin
@@ -497,7 +497,7 @@ md"""
 On my computer, the SIMD code is 10x faster than the non-SIMD code. SIMD alone accounts for only about 4x improvements (since we moved from 64-bits per iteration to 256 bits per iteration). The rest of the gain comes from not spending time checking the bounds and from automatic loop unrolling (explained later), which is also made possible by the `@inbounds` annotation.
 
 #### SIMD needs a loop where loop order doesn't matter
-SIMD can change the order in which elements in an array is processed. If the result of any iteration depends on any previous iteration such that the elements can't be re-ordered, the compiler will usually not SIMD-vectorize. Often when a loop won't auto-vectorize, it's due to subtleties in which data moves around in registers means that there will be some hidden memory dependency between elements in an array.
+SIMD can change the order in which elements in an array is processed. If the result of any iteration depends on any previous iteration such that the elements can't be re-ordered, the compiler will usually not SIMD-vectorize. Often when a loop won't auto-vectorize, it's due to subtleties in which data moves around in registers, meaning that there will be some hidden memory dependency between elements in an array.
 
 Imagine we want to sum some 64-bit integers in an array using SIMD. For simplicity, let's say the array has 8 elements, `A`, `B`, `C` ... `H`. In an ordinary non-SIMD loop, the additions would be done like so:
 
@@ -549,7 +549,7 @@ If we create an array containing four `AlignmentTest` objects `A`, `B`, `C` and 
 Note again that byte no. 8, 16, 24 and 32 are empty to preserve alignment, wasting memory.
 Now suppose you want to do an operation on all the `.a` fields of the structs. Because the `.a` fields are scattered 8 bytes apart, SIMD operations are much less efficient (loading up to 4 fields at a time) than if all the `.a` fields were stored together (where 8 fields could fit in a 256-bit register). When working with the `.a` fields only, the entire 64-byte cache lines would be read in, of which only half, or 32 bytes would be useful. Not only does this cause more cache misses, we also need instructions to pick out the half of the data from the SIMD registers we need.
 
-The memory structure we have above is termed an "array of structs," because, well, it is an array filled with structs. Instead we can strucure our 4 objects `A` to `D` as a "struct of arrays." Conceptually, it could look like:
+The memory structure we have above is termed an "array of structs," because, well, it is an array filled with structs. Instead we can structure our 4 objects `A` to `D` as a "struct of arrays." Conceptually, it could look like:
 """
 
 # ╔═╡ fc2d2f1a-8af1-11eb-11a4-8700f94e866e
@@ -850,14 +850,14 @@ call_plus(x) = x + 1;
 
 # ╔═╡ a105bd68-8af2-11eb-31f6-3335b4fb0f08
 md"""
-The function `call_plus` calls `+`, and is compiled to a single `leaq` instruction (as well as some filler `retq` and `nopw`). But `+` is a normal Julia function, so `call_plus` is an example of one regular Julia function calling another. Why is there no `callq` instruction to call `+`?
+The function `call_plus` calls `+`, and is compiled to a single `leaq` instruction (as well as some filler `retq` and `nopw`). But `+` is a normal Julia function, so `call_plus` is also an example of one regular Julia function calling another. Why is there no `callq` instruction to call `+`?
 
 The compiler has chosen to *inline* the function `+` into `call_plus`. That means that instead of calling `+`, it has copied the *content* of `+` directly into `call_plus`. The advantages of this is:
 * There is no overhead from the function call
 * There is no need to construct a `Tuple` to hold the arguments of the `+` function
 * Whatever computations happens in `+` is compiled together with `call_plus`, allowing the compiler to use information from one in the other and possibly simplify some calculations.
 
-So why aren't *all* functions inlined then? Inlining copies code, increases the size of it and consuming RAM. Furthermore, the *CPU instructions themselves* also needs to fit into the CPU cache (although CPU instructions have their own cache) in order to be efficiently retrieved. If everything was inlined, programs would be enormous and grind to a halt. Inlining is only an improvement if the inlined function is small.
+So why aren't *all* functions inlined then? Inlining copies code, increasing the size of it and consuming RAM. Furthermore, the *CPU instructions themselves* also needs to fit into the CPU cache (although CPU instructions have their own cache) in order to be efficiently retrieved. If everything was inlined, programs would be enormous and grind to a halt. Inlining is only an improvement if the inlined function is small.
 
 Instead, the compiler uses heuristics (rules of thumb) to determine when a function is small enough for inlining to increase performance. These heuristics are not bulletproof, so Julia provides the macros `@noinline`, which prevents inlining of small functions (useful for e.g. functions that raises errors, which must be assumed to be called rarely), and `@inline`, which does not *force* the compiler to inline, but *strongly suggests* to the compiler that it ought to inline the function.
 
@@ -871,9 +871,9 @@ begin
     @noinline noninline_poly(x) = x^3 - 4x^2 + 9x - 11
     inline_poly(x) = x^3 - 4x^2 + 9x - 11
 
-    function time_function(F, x::AbstractVector)
+    function time_function(F, v::AbstractVector)
         n = 0
-        for i in x
+        for i in v
             n += F(i)
         end
         return n
@@ -1026,7 +1026,7 @@ md"""
 ## Avoid unpredicable branches
 As mentioned previously, CPU instructions take multiple cycles to complete, but may be queued into the CPU before the previous instruction has finished computing. So what happens when the CPU encounters a branch (i.e. a jump instruction)? It can't know which instruction to queue next, because that depends on the instruction that it just put into the queue and which has yet to be executed.
 
-Modern CPUs make use of *branch prediction*. The CPU has a *branch predictor* circuit, which guesses the correct branch based on which branches were recently taken. In essense, the branch predictor attempts to learn simple patterns in which branches are taken in code, while the code is running. After queueing a branch, the CPU immediately queues instructions from whatever branch predicted by the branch predictor. The correctness of the guess is verified later, when the queued branch is being executed. If the guess was correct, great, the CPU saved time by guessing. If not, the CPU has to empty the pipeline and discard all computations since the initial guess, and then start over. This process causes a delay of a few nanoseconds.
+Modern CPUs make use of *branch prediction*. The CPU has a *branch predictor* circuit, which guesses the correct branch based on which branches were recently taken. In essence, the branch predictor attempts to learn simple patterns in which branches are taken in code, while the code is running. After queueing a branch, the CPU immediately queues instructions from whatever branch predicted by the branch predictor. The correctness of the guess is verified later, when the queued branch is being executed. If the guess was correct, great, the CPU saved time by guessing. If not, the CPU has to empty the pipeline and discard all computations since the initial guess, and then start over. This process causes a delay of a few nanoseconds.
 
 For the programmer, this means that the speed of an if-statement depends on how easy it is to guess. If it is trivially easy to guess, the branch predictor will be correct almost all the time, and the if statement will take no longer than a simple instruction, typically 1 clock cycle. In a situation where the branching is random, it will be wrong about 50% of the time, and each misprediction may cost many clock cycles.
 
@@ -1079,7 +1079,7 @@ end
 
 # ╔═╡ e735a302-8af2-11eb-2ce7-01435b60fdd9
 md"""
-Because branches are very fast if they are predicted correctly, highly predictable branches caused by error checks are not of much performance concern, assuming that the code essensially never errors. Hence a branch like bounds checking is very fast. You should only remove bounds checks if absolutely maximal performance is critical, or if the bounds check happens in a loop which would otherwise SIMD-vectorize.
+Because branches are very fast if they are predicted correctly, highly predictable branches caused by error checks are not of much performance concern, assuming that the code essentially never errors. Hence a branch like bounds checking is very fast. You should only remove bounds checks if absolutely maximal performance is critical, or if the bounds check happens in a loop which would otherwise SIMD-vectorize.
 
 If branches cannot be easily predicted, it is often possible to re-phrase the function to avoid branches all together. For example, in the `copy_odds!` example above, we could instead write it like so:
 """
@@ -1157,7 +1157,7 @@ To understand what is happening, we need to go a little deeper into the CPU. In 
 
 3. Finally, results from the reorder buffer is then shipped out to memory in the correct order.
 
-The existance of a re-order buffer has two important implications (that I know about) for how you should think about your code:
+The existence of a re-order buffer has two important implications (that I know about) for how you should think about your code:
 
 First, your code is executed in large chunks often in parallel, not necessarily in the same order as it was loaded in. Therefore, _a program with more, slower CPU instructions can be faster than a program with fewer, faster instructions_, if the former program manages to execute more of them in parallel.
 
@@ -1165,9 +1165,9 @@ Second, branch prediction (as discussed in the previous section) does not happen
 
 When visualizing how the code of the small `copy_odds_branches!` loop above is executed, you may imagine that the branch predictor predicts all branches, say, 6 iterations of the loop into the future, loads the microcode of all 6 future iterations into the reorder buffer, executes them all in parallel, and _then_ verifies - still in parallel - that its branches were guessed correctly.
 
- Indicentally, this bulk processing is why a branch mispredict is so bad for performance - if a branch turns out to be mispredicted, all the work in the reorder buffer must be scrapped, the and the CPU must start over with fetching new instructions, compile them to microcode, fill the buffer et cetera.
+ Indicentally, this bulk processing is why a branch mispredict is so bad for performance - if a branch turns out to be mispredicted, all the work in the reorder buffer must be scrapped, and the CPU must start over with fetching new instructions, compile them to microcode, fill the buffer et cetera.
 
-Let's think about the implications re-order buffer for a moment. Other than creating hard-to-predict branches, what kind of code can re write that messes up that workflow for the CPU?
+Let's think about the implications of the re-order buffer for a moment. Other than creating hard-to-predict branches, what kind of code can we write that messes up that workflow for the CPU?
 
 What if we do this?
 """
@@ -1205,7 +1205,7 @@ Going back to the original example, that is why the perfectly predicted `copy_od
 md"""
 ## Variable clock speed
 
-A modern laptop CPU optimized for low power consumption consumes roughly 25 watts of power on a chip as small as a stamp (and thinner than a human hair). Without proper cooling, this will cause the temperature of the CPU to skyrocket and melting the plastic of the chip, destroying it. Typically, CPUs have a maximal operating temperature of about 100 degrees C. Power consumption, and therefore heat generation, depends among many factors on clock speed, higher clock speeds generate more heat.
+A modern laptop CPU optimized for low power consumption consumes roughly 25 watts of power on a chip as small as a stamp (and thinner than a human hair). Without proper cooling, this will cause the temperature of the CPU to skyrocket and melting the plastic of the chip, destroying it. Typically, CPUs have a maximal operating temperature of about 100 degrees C. Power consumption, and therefore heat generation, depends among many factors on clock speed: higher clock speeds generate more heat.
 
 Modern CPUs are able to adjust their clock speeds according to the CPU temperature to prevent the chip from destroying itself. Often, CPU temperature will be the limiting factor in how quick a CPU is able to run. In these situations, better physical cooling for your computer translates directly to a faster CPU. Old computers can often be revitalized simply by removing dust from the interior, and replacing the cooling fans and [CPU thermal paste](https://en.wikipedia.org/wiki/Thermal_grease)!
 
@@ -1271,7 +1271,7 @@ You can see that with this task, my computer can run 8 jobs in parallel almost a
 For CPU-constrained programs, the core is kept busy with only one thread, and there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Most workloads are not that optimized and can really benefit from hyperthreading, however.
 
 #### Parallelizability
-Multithreading is more difficult that any of the other optimizations, and should be one of the last tools a programmer reaches for. However, it is also an impactful optimization. Scientific compute clusters usually contain many (e.g. hundreds, or thousands) of CPUs with tens of CPU cores each, offering a massive potential speed boost ripe for picking.
+Multithreading is more difficult than any of the other optimizations, and should be one of the last tools a programmer reaches for. However, it is also an impactful optimization. Scientific compute clusters usually contain many (e.g. hundreds, or thousands) of CPUs with tens of CPU cores each, offering a massive potential speed boost ripe for picking.
 
 A prerequisite for efficient use of multithreading is that your computation is able to be broken up into multiple chunks that can be worked on independently. Luckily the majority of compute-heavy tasks (at least in my field of work, bioinformatics), contain sub-problems that are *embarassingly parallel*. This means that there is a natural and easy way to break it into sub-problems that can be processed independently. For example, if a certain __independent__ computation is required for 100 genes, it is natural to use one thread for each gene. The size of the problem is also important. There is a small overhead involved with spawning (creating) a thread, and fetching the result from the computation of a thread. Therefore, for it to pay off, each thread should have a task that takes at least a few microseconds to complete.
 
@@ -1367,7 +1367,7 @@ md"""
 ## GPUs
 So far, we've covered only the most important kind of computing chip, the CPU. But there are many other kind of chips out there. The most common kind of alternative chip is the *graphical processing unit* or GPU.
 
-As shown in the above example with the Julia set, the task of creating computer images are often embarassingly parallel with an extremely high degree of parallelizability. In the limit, the value of each pixel is an independent task. This calls for a chip with a high number of cores to do effectively. Because generating graphics is a fundamental part of what computers do, nearly all commercial computers contain a GPU. Often, it's a smaller chip integrated into the motherboard (*integrated graphics*, popular in small laptops). Other times, it's a large, bulky card.
+As shown in the above example with the Julia set, the task of creating computer images is often embarassingly parallel with an extremely high degree of parallelizability. In the limit, the value of each pixel is an independent task. This calls for a chip with a high number of cores to do effectively. Because generating graphics is a fundamental part of what computers do, nearly all commercial computers contain a GPU. Often, it's a smaller chip integrated into the motherboard (*integrated graphics*, popular in small laptops). Other times, it's a large, bulky card.
 
 GPUs have sacrificed many of the bells and whistles of CPUs covered in this document such as specialized instructions, SIMD and branch prediction. They also usually run at lower frequencies than CPUs. This means that their raw compute power is many times slower than a CPU. To make up for this, they have a high number of cores. For example, the high-end gaming GPU NVIDIA RTX 2080Ti has 4,352 cores. Hence, some tasks can experience 10s or even 100s of times speedup using a GPU. Most notably for scientific applications, matrix and vector operations are highly parallelizable.
 
