@@ -93,7 +93,7 @@ Benchmarking this is a little tricky, because the *first* invocation will includ
 
 $$[CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
-On my computer, finding a single byte in a file (including opening and closing the file) takes about 500 µs, and accessing 1,000,000 integers from memory takes 200 milliseconds. So RAM latency is on the order of 2,500 times lower than disk's. Therefore, repeated access to files *must* be avoided in high performance computing.
+On my computer, finding a single byte in a file (including opening and closing the file) takes about 5 ms, and accessing 1,000,000 integers from memory takes 130 milliseconds. So RAM latency is on the order of 3,500 times lower than disk's. Therefore, repeated access to files *must* be avoided in high performance computing.
 
 Only a few years back, SSDs were uncommon and HDD throughput was lower than today. Therefore, old texts will often warn people not to have your program depend on the disk at all for high throughput. That advice is mostly outdated today, as most programs are incapable of bottlenecking at the throughput of even cheap, modern SSDs of 1 GB/s. The advice today still stands only for programs that need *frequent* individual reads/writes to disk, where the high *latency* accumulates. In these situations, you should indeed keep your data in RAM.
 
@@ -139,7 +139,7 @@ md"""
 
 # ╔═╡ 0f2ac53c-8c1b-11eb-3841-27f4ea1e9617
 md"""
-Surprise! The linear access pattern is more than 20 times faster! How can that be?
+Surprise! The linear access pattern is many times faster! How can that be?
 
 Next to the cache of the CPU lies a small circuit called the *prefetcher*. This electronic circuit collects data on which memory is being accessed by the CPU, and looks for patterns. When it detects a pattern, it will *prefetch* whatever data it predicts will soon be accessed, so that it already resides in cache when the CPU requests the data.
 
@@ -602,7 +602,7 @@ end;
 # ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
 let
     data = rand(UInt, 2^24)
-    @time test_file("../alen/src/main.rs")
+    @time test_file("../alen/src/data.rs")
     @time random_access(data, 1000000)
     nothing
 end
@@ -819,7 +819,8 @@ begin
 end;
 
 # ╔═╡ 2dc4f936-8af2-11eb-1117-9bc10e619ec6
-md"(Thanks to Kristoffer Carlsson for [the example](http://kristofferc.github.io/post/intrinsics/)). We can verify it works by checking the assembly of the function, which should contain only a single `vaesenc` instruction, as well as the `retq` (return) and the `nopw` (do nothing, used as a filler to align the CPU instructions in memory) instruction:"
+md"(Thanks to Kristoffer Carlsson for [the example](http://kristofferc.github.io/post/intrinsics/)). We can verify it works by checking the assembly of the function.
+This only contains a single `vaesenc` instruction, besides the several instructions that make up the function call itself (`push`, `pop`, `mov`, `ret` and `nop`):"
 
 # ╔═╡ 76a4e83c-8af2-11eb-16d7-75eaabcb21b6
 @code_native debuginfo=:none dump_module=false aesenc(
@@ -851,7 +852,7 @@ call_plus(x) = x + 1;
 
 # ╔═╡ a105bd68-8af2-11eb-31f6-3335b4fb0f08
 md"""
-The function `call_plus` calls `+`, and is compiled to a single `leaq` instruction (as well as some filler `retq` and `nopw`). But `+` is a normal Julia function, so `call_plus` is also an example of one regular Julia function calling another. Why is there no `callq` instruction to call `+`?
+The function `call_plus` calls `+`, and is compiled to a single `leaq` instruction (as well as some filler instructions related to the function call itself). But `+` is a normal Julia function, so `call_plus` is also an example of one regular Julia function calling another. Why is there no `callq` instruction to call `+`?
 
 The compiler has chosen to *inline* the function `+` into `call_plus`. That means that instead of calling `+`, it has copied the *content* of `+` directly into `call_plus`. The advantages of this is:
 * There is no overhead from the function call
@@ -1039,15 +1040,15 @@ We can demonstrate the performance of branch misprediction with a simple functio
 # ╔═╡ c96f7f50-8af2-11eb-0513-d538cf6bc619
 # Copy all odd numbers from src to dst.
 function copy_odds_branches!(dst::Vector{T}, src::Vector{T}) where {T <: Integer}
-    write_index = 1
+    write_index = 0
     @inbounds for i in eachindex(src) # <--- this branch is trivially easy to predict
         v = src[i]
         if isodd(v)  # <--- this is the branch we want to predict
+			write_index += 1
             dst[write_index] = v
-            write_index += 1
         end
     end
-    return dst
+    return write_index
 end;
 
 # ╔═╡ cf90c600-8af2-11eb-262a-2763ae29b428
@@ -1221,9 +1222,8 @@ md"""
 ## Multithreading
 In the bad old days, CPU clock speed would increase every year as new processors were brought onto the market. Partially because of heat generation, this acceleration slowed down once CPUs hit the 3 GHz mark. Now we see only minor clock speed increments every processor generation. Instead of raw speed of execution, the focus has shifted on getting more computation done per clock cycle. CPU caches, CPU pipelining (i.e. the entire re-order buffer "workflow"), branch prediction and SIMD instructions are all important contibutions in this area, and have all been covered here.
 
-Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel. Furthermore, many CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a branch misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors.
-
-Hyperthreading only really matters when your threads are sometimes prevented from doing work. Besides CPU-internal causes like cache misses, a thread can also be paused because it is waiting for an external resource like a webserver or data from a disk. If you are writing a program where some threads spend a significant time idling, the core can be used by the other thread, and hyperthreading can show its value.
+Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel.
+By writing *parallel* programs, we can have a single program use multiple threads to do work at the same time, thus finishing faster.
 
 Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. To do this, start Julia with the `-t` option - e.g. `-t 8` for 8 threads. I have set Julia to have 4 threads:
 """
@@ -1231,45 +1231,43 @@ Let's see our first parallel program in action. First, we need to make sure that
 # ╔═╡ 1886f60e-8af3-11eb-2117-eb0014d2fca1
 Threads.nthreads()
 
-# ╔═╡ 1a0e2998-8af3-11eb-031b-a3448fd65041
-# Spend about half the time waiting, half time computing
-function half_asleep(start::Bool)
-    a, b = 1, 0
-    for iteration in 1:5
-        start && sleep(0.1)
-		t1 = time()
-		while time() - t1 < 0.1
-			for i in 1:100000
-            	a, b = a + b, a
-			end
-        end
-        start || sleep(0.1)
-    end
-    return a
-end;
+# ╔═╡ 8e59bef3-90fe-4680-802a-9350dfe5fe73
+function frequent_cache_misses()
+    src = rand(UInt8, 10_000_000)
+	dst = similar(src)
+	x = 0
+	for i in 1:20
+		x += copy_odds_branches!(dst, src)
+	end
+	x
+end		
 
 # ╔═╡ 1ecf434a-8af3-11eb-3c49-cb21c6a80bfc
-function parallel_sleep(n_jobs)
-    jobs = []
+function parallel_run(n_jobs)
+    jobs = Task[]
     for job in 1:n_jobs
-        push!(jobs, Threads.@spawn half_asleep(isodd(job)))
+        push!(jobs, Threads.@spawn frequent_cache_misses())
     end
     return sum(fetch, jobs)
 end;
 
 # ╔═╡ 2192c228-8af3-11eb-19d8-81db4f3c0d81
 let
-    parallel_sleep(1); # run once to compile it
-    for njobs in (1, 4, 8, 16, 32)
-        @time parallel_sleep(njobs);
+    parallel_run(1); # run once to compile it
+    for njobs in (1, 4, 8)
+        @time parallel_run(njobs);
     end
 end
 
 # ╔═╡ 2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
 md"""
-You can see that with this task, my computer can run 8 jobs in parallel almost as fast as it can run 1. But 16 jobs takes much longer. This is because 4 can run at the same time, and 4 more can sleep for a total of 8 concurrent jobs.
+You can see that with this task, my computer can run 4 jobs in parallel almost as fast as it can run 1. But 8 jobs takes twice as long as 4. This is because 4 can run simultaneously, one on each thread.
 
-For CPU-constrained programs, the core is kept busy with only one thread, and there is not much to do as a programmer to leverage hyperthreading. Actually, for the most optimized programs, it usually leads to better performance to *disable* hyperthreading. Most workloads are not that optimized and can really benefit from hyperthreading, however.
+#### Hyperthreading
+Besides each CPU having multiple cores, some CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a branch misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors.
+
+Hyperthreading only really matters when your threads are sometimes prevented from doing work, for example due to cache misses or branch mispredictions. If you are writing a program where some threads spend a significant time idling, the core can be used by the other thread, and hyperthreading can show its value.
+On the other hand, some of the most carefully optimized programs rarely experience cache misses or branch mispredictions, such that the CPU is kept busy with only a single thread. For these rare programs, it usually leads to better performance to *disable* hyperthreading.
 
 #### Parallelizability
 Multithreading is more difficult than any of the other optimizations, and should be one of the last tools a programmer reaches for. However, it is also an impactful optimization. Scientific compute clusters usually contain many (e.g. hundreds, or thousands) of CPUs with tens of CPU cores each, offering a massive potential speed boost ripe for picking.
@@ -1778,7 +1776,7 @@ version = "17.4.0+2"
 # ╟─0b6d234e-8af3-11eb-1ba9-a1dcf1497785
 # ╟─119d269c-8af3-11eb-1fdc-b7ac75b89cf2
 # ╠═1886f60e-8af3-11eb-2117-eb0014d2fca1
-# ╠═1a0e2998-8af3-11eb-031b-a3448fd65041
+# ╠═8e59bef3-90fe-4680-802a-9350dfe5fe73
 # ╠═1ecf434a-8af3-11eb-3c49-cb21c6a80bfc
 # ╠═2192c228-8af3-11eb-19d8-81db4f3c0d81
 # ╟─2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
