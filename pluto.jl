@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.29
+# v0.19.32
 
 using Markdown
 using InteractiveUtils
@@ -48,9 +48,6 @@ To write fast code *in practice*, it is necessary to profile your code to find b
 
 # ╔═╡ 800d827e-8c20-11eb-136a-97a622a7c1e6
 TableOfContents()
-
-# ╔═╡ b49d6a14-d359-4353-98b0-dd1da4212ac0
-
 
 # ╔═╡ 9a24985a-8aef-11eb-104a-bd9abf0adc6d
 md"""
@@ -122,7 +119,7 @@ Effective use of the cache comes down to *locality*, temporal and spacial locali
 
 To illustrate this, let's compare the performance of the `random_access` function above when it's run on a short (8 KiB) vector, compared to a long (16 MiB) one. The first one is small enough that after just a few accesses, all the data has been copied to cache. The second is so large that new indexing causes cache misses most of the time.
 
-Notice the large discrepancy in time spent - a difference of around 70x.
+Notice the large discrepancy in time spent.
 """
 
 # ╔═╡ c6da4248-8c19-11eb-1c16-093695add9a9
@@ -392,10 +389,12 @@ begin
     struct StackAllocated <: AllocatedInteger
         x::Int
     end
+	Base.show(io::IO, x::StackAllocated) = print(io, "StackAllocated(", x.x, ')')
 
     mutable struct HeapAllocated <: AllocatedInteger
         x::Int
     end
+	Base.show(io::IO, x::HeapAllocated) = print(io, "HeapAllocated(", x.x, ')')
 end
 
 # ╔═╡ 2e3304fe-8af1-11eb-0f6a-0f84d58326bf
@@ -602,7 +601,7 @@ end;
 # ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
 let
     data = rand(UInt, 2^24)
-    @time test_file("../alen/src/data.rs")
+    @time test_file("../vamb/LICENSE")
     @time random_access(data, 1000000)
     nothing
 end
@@ -1225,7 +1224,7 @@ In the bad old days, CPU clock speed would increase every year as new processors
 Another important area where CPUs have improved is simply in numbers: Almost all CPU chips contain multiple smaller CPUs, or *cores* inside them. Each core has their own small CPU cache, and does computations in parallel.
 By writing *parallel* programs, we can have a single program use multiple threads to do work at the same time, thus finishing faster.
 
-Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. To do this, start Julia with the `-t` option - e.g. `-t 8` for 8 threads. I have set Julia to have 4 threads:
+Let's see our first parallel program in action. First, we need to make sure that Julia actually was started with the correct number of threads. To do this, start Julia with the `-t` option - e.g. `-t 8` for 8 threads. I have set Julia to have 8 threads:
 """
 
 # ╔═╡ 1886f60e-8af3-11eb-2117-eb0014d2fca1
@@ -1254,7 +1253,7 @@ end;
 # ╔═╡ 2192c228-8af3-11eb-19d8-81db4f3c0d81
 let
     parallel_run(1); # run once to compile it
-    for njobs in (1, 4, 8)
+    for njobs in (1, 8, 16)
         @time parallel_run(njobs);
     end
 end
@@ -1306,7 +1305,7 @@ begin
 
     "Create a Julia fractal image"
     function julia_single_threaded()
-        M = Matrix{UInt8}(undef, 5000, 5000)
+        M = Matrix{UInt8}(undef, 5000, 20000)
         for (x, real) in enumerate(range(-1.0f0, 1.0f0, length=size(M, 2)))
             fill_column!(M, x, real)
         end
@@ -1329,7 +1328,7 @@ begin
         F, L = first(cols), last(cols)
         # If only one column, fill it using fill_column!
         if F == L
-            r = range(-1.0f0,1.0f0,length=size(M, 1))[F]
+            r = range(-1.0f0, 1.0f0, length=size(M, 2))[F]
             fill_column!(M, F, r)
         # Else divide the range of columns in two, spawning a new task for each half
         else
@@ -1341,7 +1340,7 @@ begin
     end
 
     function julia_multi_threaded()
-        M = Matrix{UInt8}(undef, 5000, 5000)
+        M = Matrix{UInt8}(undef, 5000, 20000)
         recursive_fill_columns!(M, 1:size(M, 2))
         return M
     end
@@ -1352,7 +1351,7 @@ end;
 
 # ╔═╡ 4e8f6cb8-8af3-11eb-1746-9384995d7022
 md"""
-This is almost exactly 4 times as fast! With 4 threads, this is close to the best case scenario, only possible for near-perfect embarrasingly parallel tasks.
+This is much faster! With 8 threads, this is close to the best case scenario, only possible for near-perfect embarrasingly parallel tasks.
 
 Despite the potential for great gains, in my opinion, multithreading should be one of the last resorts for performance improvements, for three reasons:
 
@@ -1390,7 +1389,7 @@ PlutoUI = "~0.7.52"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.10.0-beta3"
+julia_version = "1.10.0-rc1"
 manifest_format = "2.0"
 project_hash = "d27b4cdcd6419242f418cd812af338a9bc51ccbc"
 
@@ -1481,7 +1480,7 @@ version = "0.6.4"
 [[deps.LibCURL_jll]]
 deps = ["Artifacts", "LibSSH2_jll", "Libdl", "MbedTLS_jll", "Zlib_jll", "nghttp2_jll"]
 uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
-version = "8.0.1+1"
+version = "8.4.0+0"
 
 [[deps.LibGit2]]
 deps = ["Base64", "LibGit2_jll", "NetworkOptions", "Printf", "SHA"]
@@ -1610,7 +1609,7 @@ version = "1.10.0"
 [[deps.SuiteSparse_jll]]
 deps = ["Artifacts", "Libdl", "Pkg", "libblastrampoline_jll"]
 uuid = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
-version = "7.2.0+1"
+version = "7.2.1+1"
 
 [[deps.TOML]]
 deps = ["Dates"]
@@ -1668,7 +1667,6 @@ version = "17.4.0+2"
 # ╟─15f5c31a-8aef-11eb-3f19-cf0a4e456e7a
 # ╠═d559a444-8928-4bef-95c2-cb2a7cb284ce
 # ╟─800d827e-8c20-11eb-136a-97a622a7c1e6
-# ╠═b49d6a14-d359-4353-98b0-dd1da4212ac0
 # ╟─9a24985a-8aef-11eb-104a-bd9abf0adc6d
 # ╟─a2fad250-8aef-11eb-200f-e5f8caa57a67
 # ╠═abb45d6a-8aef-11eb-37a4-7b10847b39b4
