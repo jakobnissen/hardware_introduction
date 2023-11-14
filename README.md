@@ -2,9 +2,9 @@
 
 This document is hosted at https://viralinstruction.com/posts/hardware/
 
-It is written as a [Pluto notebook](https://github.com/fonsp/Pluto.jl). If you can, I recommend running the code in a Pluto notebook so you can play around with it and learn. Alternatively, you can read the HTML file in your browser.
+It is written as a [Pluto notebook](https://plutojl.org). If you can, I recommend running the code in a Pluto notebook so you can play around with it and learn. Alternatively, you can read the HTML file in your browser.
 
-PR's are welcome.
+PRs are welcome.
 
 ### This notebook covers:
 * Why you must limit your disk read/writes
