@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.32
+# v0.20.3
 
 using Markdown
 using InteractiveUtils
@@ -90,12 +90,11 @@ Benchmarking this is a little tricky, because the *first* invocation will includ
 
 $$[CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
-On my computer, finding a single byte in a file (including opening and closing the file) takes about 5 ms, and accessing 1,000,000 integers from memory takes 130 milliseconds. So RAM latency is on the order of 3,500 times lower than disk's. Therefore, repeated access to files *must* be avoided in high performance computing.
+On my computer, finding a single byte in a file (including opening and closing the file) takes about 8 ms, and accessing 1,000,000 integers from memory takes 300 milliseconds. So RAM latency is thousands of times lower than the disk's. Therefore, repeated access to files *must* be avoided in high performance computing.
 
 Only a few years back, SSDs were uncommon and HDD throughput was lower than today. Therefore, old texts will often warn people not to have your program depend on the disk at all for high throughput. That advice is mostly outdated today, as most programs are incapable of bottlenecking at the throughput of even cheap, modern SSDs of 1 GB/s. The advice today still stands only for programs that need *frequent* individual reads/writes to disk, where the high *latency* accumulates. In these situations, you should indeed keep your data in RAM.
 
-The worst case for performance is if you need to read/write a large file in tiny chunks, for example one single byte at a time. In these situations, great speed improvements can be found by *buffering* the file. When  buffering, you read in larger chunks – the *buffer* – to memory, and when you want to read from the file, you check if it's in the buffer. If not, read another large chunk into your buffer from the file. This approach minimizes disk latency. Both your operating system and your programming language will make use of caches, however, sometimes [it is necessary to manually buffer your files](https://github.com/JuliaLang/julia/issues/34195).
-
+The worst case for performance is if you need to read/write a large file in tiny chunks, for example one single byte at a time. In these situations, great speed improvements can be found by *buffering* the file. When  buffering, you read in larger chunks – the *buffer* – to memory, and when you want to read from the file, you check if it's in the buffer. If not, read another large chunk into your buffer from the file. This approach minimizes disk latency. Both your operating system and your programming language will make use of caches.
 """
 
 # ╔═╡ f58d428c-8aef-11eb-3127-89d729e23823
@@ -233,20 +232,25 @@ end;
 md"""
 Let's break it down:
 
-The lines beginning with `;` are comments, and explain which section of the code the following instructions come from. They show the nested series of function calls, and where in the source code they are. You can see that `eachindex`, calls `axes1`, which calls `axes`, which calls `size`. Under the comment line containing the `size` call, we see the first CPU instruction. The instruction name is on the far left, `movq`. The name is composed of two parts, `mov`, the kind of instruction (to move content to or from a register), and a suffix `q`, short for "quad", which means 64-bit integer. There are the following suffixes:  `b` (byte, 8 bit), `w` (word, 16 bit), `l`, (long, 32 bit) and `q` (quad, 64 bit).
+The lines beginning with `;` are comments, and explain which section of the code the following instructions come from. They show the nested series of function calls, and where in the source code they are. You can see that `eachindex`, calls `axes1`, which calls `axes`, which calls `size`. Under the comment line containing the `size` call, we see the first CPU instruction. The instruction name is on the far left, `push` (push to the stack).
+Immediately following the `push` instruction is the _arguments_ to the instruction: 
+In this case `rbp` - the name of a specific register.
 
-The next two columns in the instruction, `24(%rdi)` and `%rax` are the arguments to `movq`. These are the names of the registers (we will return to registers later) where the data to operate on are stored.
+Then next instruction is `mov	rcx, qword ptr [rdi + 16]`. In this case, it means:
+* The `mov` instruction moves data to or from registers
+* The first argument `rcx` is the name of a register, and is the _destination_
+* The second argument `qword ptr [rdi + 16]` means: A quad-word (i.e. 64-bit integer) loaded from a pointer (`ptr`) at the memory location 16 larger than the number stored in register `rdi`.
 
-You can also see (in the larger display of assembly code) that the code is segmented into sections beginning with a name starting with "L". For example, when I ran it, there's a section `L32`. These sections are jumped between using if-statements, or *branches*. Here, section `L32` marks the actual loop. You can see the following two instructions in the `L32` section:
+You can also see (in the larger display of assembly code) that the code is segmented into sections beginning with a name starting with "L". For example, when I ran it, there's a section `LBB0_3`. These sections are jumped between using if-statements, or *branches*. Here, section `LBB0_3` marks the actual loop. You can see the following two instructions in the `LBB0_3` section:
 
 ```
-; ││┌ @ promotion.jl:401 within `=='
-     cmpq    $1, %rdi
+; ││┌ @ promotion.jl:639 within `==`
+	cmp	rdi, 1
 ; │└└
-     jne     L32
+	jne	.LBB0_3
 ```
 
-The first instruction `cmpq` (compare quad) compares the data in registry `rdi`, which holds the number of iterations left (plus one), with the number 1, and sets certain flags (wires) in the CPU based on the result. The next instruction `jne` (jump if not equal) makes a jump if the "equal" flag is not set in the CPU, which happens if there is one or more iterations left. You can see it jumps to `L32`, meaning this section repeats in that case.
+The first instruction `cmp` (compare integers) compares the data in registry `rdi`, which holds the number of iterations left (plus one), with the number 1, and sets certain flags (wires) in the CPU based on the result, including the `equal` flag in the CPU. The next instruction `jne` (jump if not equal) makes a jump if the "equal" flag is not set. You can see it jumps to `LBB0_3`, meaning this section repeats in that case.
 """
 
 # ╔═╡ b73b5eaa-8af0-11eb-191f-cd15de19bc38
@@ -303,7 +307,7 @@ begin
 end;
 
 # ╔═╡ ce0e65d4-8af0-11eb-0c86-2105c26b62eb
-md"However, modern compilers are pretty clever, and will often figure out the optimal instructions to use in your functions to obtain the same result, by for example replacing an integer divide `idivq` instruction with a bitshift right (`shrq`) where applicable to be faster. You need to check the assembly code yourself to see:"
+md"However, modern compilers are pretty clever, and will often figure out the optimal instructions to use in your functions to obtain the same result, by for example replacing an integer divide `idiv` instruction with a bitshift right (`shr`) where applicable to be faster. You need to check the assembly code yourself to see:"
 
 # ╔═╡ d376016a-8af0-11eb-3a15-4322759143d1
 # Calling it with these keywords removes comments in the assembly code
@@ -404,7 +408,7 @@ md"We can inspect the code needed to instantiate a `HeapAllocated` object with t
 @code_native debuginfo=:none dump_module=false HeapAllocated(1)
 
 # ╔═╡ 3713a8da-8af1-11eb-2cb2-1957455227d0
-md"Notice the `callq` instruction in the `HeapAllocated` one. This instruction calls out to other functions, meaning that in fact, much more code is really needed to create a `HeapAllocated` object that what is displayed. In constrast, the `StackAllocated` really only needs a few instructions:"
+md"Notice the `call` instruction in the `HeapAllocated` one. This instruction calls out to other functions, meaning that in fact, much more code is really needed to create a `HeapAllocated` object that what is displayed. In constrast, the `StackAllocated` really only needs a few instructions:"
 
 # ╔═╡ 59f58f1c-8af1-11eb-2e88-997e9d4bcc48
 @code_native debuginfo=:none dump_module=false StackAllocated(1)
@@ -429,7 +433,7 @@ To operate on data structures larger than one register, the data must be broken 
 @code_native debuginfo=:none dump_module=false UInt128(5) + UInt128(11)
 
 # ╔═╡ 7d3fcbd6-8af1-11eb-0441-2f88a9d59966
-md"""There is no register that can store 128-bit integers and add them together. So first, the lower 64 bits must be added using a `addq` instruction, fitting in a register. Then the upper bits are added with a `adcq` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
+md"""There is no register that can store 128-bit integers and add them together. So first, the lower 64 bits must be added using a `add` instruction, fitting in a register. Then the upper bits are added with a `adc` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
 
 This example illustrates what was traditionally a bottleneck for CPU throughput: Each CPU instruction must operate on one or more registers, and each register only contains one integer/float at a time.
 
@@ -601,7 +605,7 @@ end;
 # ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
 let
     data = rand(UInt, 2^24)
-    @time test_file("../vamb/LICENSE")
+    @time test_file("../smafa/Cargo.lock")
     @time random_access(data, 1000000)
     nothing
 end
@@ -798,36 +802,7 @@ end
 # ╔═╡ 1e7edfdc-8af2-11eb-1429-4d4220bad0f0
 md"""
 The timings you observe here will depend on whether your compiler is clever enough to realize that the computation in the first function can be expressed as a `popcnt` instruction, and thus will be compiled to that. On my computer, the compiler is not able to make that inference, and the second function achieves the same result more than 100x faster.
-
-#### Call any CPU instruction
-Julia makes it possible to call CPU instructions direcly. This is not generally advised, since not all your users will have access to the same CPU with the same instructions, and so your code will crash on users working on computers of different brands.
-
-The latest CPUs contain specialized instructions for AES encryption and SHA256 hashing. If you wish to call these instructions, you can call Julia's backend compiler, LLVM, directly. In the example below, I create a function which calls the `vaesenc` (one round of AES encryption) instruction directly:
 """
-
-# ╔═╡ 25a47c54-8af2-11eb-270a-5b58c3aafe6e
-begin
-    # This is a 128-bit CPU "vector" in Julia
-    const __m128i = NTuple{2, VecElement{Int64}}
-
-    # Define the function in terms of LLVM instructions
-    aesenc(a, roundkey) = ccall(
-        "llvm.x86.aesni.aesenc", llvmcall, __m128i,
-        (__m128i, __m128i), a, roundkey
-    )
-end;
-
-# ╔═╡ 2dc4f936-8af2-11eb-1117-9bc10e619ec6
-md"(Thanks to Kristoffer Carlsson for [the example](http://kristofferc.github.io/post/intrinsics/)). We can verify it works by checking the assembly of the function.
-This only contains a single `vaesenc` instruction, besides the several instructions that make up the function call itself (`push`, `pop`, `mov`, `ret` and `nop`):"
-
-# ╔═╡ 76a4e83c-8af2-11eb-16d7-75eaabcb21b6
-@code_native debuginfo=:none dump_module=false aesenc(
-	__m128i((1, 1)), __m128i((1, 1))
-)
-
-# ╔═╡ 797264de-8af2-11eb-0cb0-adf3fbc95c90
-md"""Algorithms which makes use of specialized instructions can be extremely fast. [In a blog post](https://mollyrocket.com/meowhash), the video game company Molly Rocket unveiled a new non-cryptographic hash function using AES instructions which reached unprecedented speeds."""
 
 # ╔═╡ 80179748-8af2-11eb-0910-2b825104159d
 md"## Inlining
@@ -838,7 +813,7 @@ f() = error();
 
 # ╔═╡ 8af63980-8af2-11eb-3028-83a935bac0db
 md"""
-This code contains the `callq` instruction, which calls another function. A function call comes with some overhead depending on the arguments of the function and other things. While the time spent on a function call is measured in nanoseconds, it can add up if the function called is in a tight loop.
+This code contains the `call` instruction, which calls another function. A function call comes with some overhead depending on the arguments of the function and other things. While the time spent on a function call is measured in nanoseconds, it can add up if the function called is in a tight loop.
 
 However, if we show the assembly of this function:
 """
@@ -851,7 +826,7 @@ call_plus(x) = x + 1;
 
 # ╔═╡ a105bd68-8af2-11eb-31f6-3335b4fb0f08
 md"""
-The function `call_plus` calls `+`, and is compiled to a single `leaq` instruction (as well as some filler instructions related to the function call itself). But `+` is a normal Julia function, so `call_plus` is also an example of one regular Julia function calling another. Why is there no `callq` instruction to call `+`?
+The function `call_plus` calls `+`, and is compiled to a single `lea` instruction (as well as some filler instructions related to the function call itself). But `+` is a normal Julia function, so `call_plus` is also an example of one regular Julia function calling another. Why is there no `callq` instruction to call `+`?
 
 The compiler has chosen to *inline* the function `+` into `call_plus`. That means that instead of calling `+`, it has copied the *content* of `+` directly into `call_plus`. The advantages of this is:
 * There is no overhead from the function call
@@ -889,6 +864,89 @@ let
     nothing
 end
 
+# ╔═╡ 29c4f302-1968-43e0-a9bd-fe4c2e5a8970
+md"""
+## Outlining
+To summarize the above section on inlining:
+* Inlining means copying the _content_ of a function body directly into its caller
+* This saves the small overhead imposed by the function call, and allows the caller and callee to be optimised together, enabling more optimisation
+* Only small functions are automatically inlined by the compiler
+
+Sometimes, you have a funciton with the following structure:
+
+```julia
+function my_computation(args...)
+    if common_occurrence(args)
+        return simple_computation(args)
+	else
+        # Do complex computation (lots of code)
+	end
+end
+```
+
+This could, for instance be a function that caches its result, and usually can simply fetch the result from its cache, but occasionally must compute a new result when there is a cache miss.
+
+We can illustrate this with the function `trig_default` below.
+When given a random integer, the first branch is taken about 99.2% of the time and is quite fast.
+When the branch is _not_ taken, a bunch of trigonomic functions are executed, which is complex and gets compiled to so much machine code that Julia's compiler will not automatically inline `trig_default`.
+"""
+
+# ╔═╡ 212d20fa-ab72-4aab-879e-4be8af76ffa3
+function trig_default(x::Int)
+	# This is true ~99% of the time
+	if !iszero(x & 127)
+		div(x, 2) + 1
+	else
+		# Rarely executed, but trigonomic functions are relatively
+		# complex, so this results in quite a bit of machine code
+		trunc(Int, sin(x) + atan(x) + cos(1 - x) + sqrt(1/x))
+	end
+end
+
+# ╔═╡ e72e6430-54d9-4525-a2b1-7905ee520bb4
+numbers = rand(1:typemax(Int), 1_000_000);
+
+# ╔═╡ 85e3dda2-e32c-4302-9c80-5e9703d180a6
+@btime sum(trig_default, numbers; init=0) seconds=1
+
+# ╔═╡ bc7b3670-7681-4772-9013-4234be701799
+md"""As a result, in the call to `sum` above, the many function calls to `trig_default` takes up a large fraction of the total time spent.
+
+This is clearly suboptimal: The trigonomic code is executed less than 1% of the time `trig_default` is called, but its mere presence prevents the function from being inlined, which causes _every_ call to it to be slower.
+We could of course directly command the compiler to inline `trig_default` using the `@inline` macro - but remember that inlining comes with drawbacks: There is a reason not all function calls are always inlined.
+
+What we really want is to only inline the common case which happens 99% of the time.
+In order to do this, we can refactor `trig_default` like so:
+"""
+
+# ╔═╡ 12ed49db-325a-49d8-bd29-8436bab81749
+function trig_outlined(x::Int)
+	trunc(Int, sin(x) + atan(x) + cos(1 - x) + sqrt(1/x))
+end
+
+# ╔═╡ 108e7813-e222-4363-9e84-182daa67cc63
+function trig_with_outline(x::Int)
+	if !iszero(x & 127)
+		div(x, 2) + 1
+	else
+		trig_outlined(x)
+	end
+end
+
+# ╔═╡ dfb3e12b-e0db-45cf-88bf-5b8967c9c14d
+md"""
+We have moved the trigonometry into a different function, - the opposite of inlining.
+Such a code change is aptly called _outlining_.
+
+Now, the new `trig_outlined` function contains the complex trigonometric code, which causes it to not inline into `trig_with_outline`. As a consequence, `trig_with_outline` _itself_ is now much smaller, and is more likely to inline.
+
+In order words, by outlining the rare case, we have encouraged the compiler to inline the case that happens 99% of the time.
+As a result, the equivalent call to `sum` is more than twice as fast:
+"""
+
+# ╔═╡ 50e5443c-8aff-4869-8db9-1de7f5ac8161
+@btime sum(trig_with_outline, numbers; init=0) seconds=1
+
 # ╔═╡ bc0a2f22-8af2-11eb-3803-f54f84ddfc46
 md"""
 ## Unrolling
@@ -896,17 +954,17 @@ Consider a function that sums a vector of 64-bit integers. If the vector's data'
 
 ```
 L1:
-    ; add the integer at location %r9 + %rcx * 8 to %rax
-    addq   (%r9,%rcx,8), %rax
+    ; add the integer at location rdx + rdi * 8 to rax
+    add   rax, qword ptr [rdx + 8*rdi]
 
     ; increment index by 1
-    addq   $1, %rcx
+    inc   rdi
 
     ; compare index to length of vector
-    cmpq   %r8, %rcx
+    cmp   r8, rdi
 
     ; repeat loop if index is smaller
-    jb     L1
+    jne   L1
 ```
 
 For a total of 4 instructions per element of the vector. The actual code generated by Julia will be similar to this, but also incluce extra instructions related to bounds checking that are not relevant here (and of course will include different comments).
@@ -932,29 +990,29 @@ The result is obviously the same if we assume the length of the vector is divisi
 
 ```
 L1:
-    addq   (%r9,%rcx,8), %rax
-    addq   8(%r9,%rcx,8), %rax
-    addq   16(%r9,%rcx,8), %rax
-    addq   24(%r9,%rcx,8), %rax
-    addq   $4, %rcx
-    cmpq   %r8, %rcx
-    jb     L1
+    add   rax, qword ptr [rdx + 8*rdi]
+    add   rax, qword ptr [rdx + 8*rdi + 8]
+    add   rax, qword ptr [rdx + 8*rdi + 16]
+    add   rax, qword ptr [rdx + 8*rdi + 24]
+    add   rdx, 4
+    cmp   r8, rdx
+    jne   L1
 ```
 
 For a total of 7 instructions per 4 additions, or 1.75 instructions per addition. This is less than half the number of instructions per integer! The speed gain comes from simply checking less often when we're at the end of the loop. We call this process *unrolling* the loop, here by a factor of four. Naturally, unrolling can only be done if we know the number of iterations beforehand, so we don't "overshoot" the number of iterations. Often, the compiler will unroll loops automatically for extra performance, but it can be worth looking at the assembly. For example, this is the assembly for the innermost loop generated on my computer for `sum([1])`:
 
-    L144:
-        vpaddq  16(%rcx,%rax,8), %ymm0, %ymm0
-        vpaddq  48(%rcx,%rax,8), %ymm1, %ymm1
-        vpaddq  80(%rcx,%rax,8), %ymm2, %ymm2
-        vpaddq  112(%rcx,%rax,8), %ymm3, %ymm3
-        addq    $16, %rax
-        cmpq    %rax, %rdi
-        jne L144
+    .LBB0_6:
+        vpaddq  zmm0, zmm0, zmmword ptr [rdx + 8*rax + 8]
+        vpaddq  zmm1, zmm1, zmmword ptr [rdx + 8*rax + 72]
+        vpaddq  zmm2, zmm2, zmmword ptr [rdx + 8*rax + 136]
+        vpaddq  zmm3, zmm3, zmmword ptr [rdx + 8*rax + 200]
+        add     rax, 32
+        cmp     r9, rax
+        jne     .LBB0_6
 
-Where you can see it is both unrolled by a factor of four, and uses 256-bit SIMD instructions, for a total of 128 bytes, 16 integers added per iteration, or 0.44 instructions per integer.
+Where you can see it is both unrolled by a factor of four, and uses 512-bit SIMD instructions, for a total of 256 bytes or 32 integers added per iteration, or 0.22 instructions per integer.
 
-Notice also that the compiler chooses to use 4 different `ymm` SIMD registers, `ymm0` to `ymm3`, whereas in my example assembly code, I just used one register `rax`. This is because, if you use 4 independent registers, then you don't need to wait for one `vpaddq` to complete (remember, it had a ~3 clock cycle latency) before the CPU can begin the next.
+Notice also that the compiler chooses to use 4 different `zmm` SIMD registers, `zmm0` to `zmm3`, whereas in my example assembly code, I just used one register `rax`. This is because, if you use 4 independent registers, then you don't need to wait for one `vpaddq` to complete (remember, it had a ~3 clock cycle latency) before the CPU can begin the next.
 
 The story for unrolling is similar to that for SIMD: The compiler will only unroll a loop if it can tell _for sure_ that it will not overshoot the number of iterations. For example, compare the two following functions:
 """
@@ -1389,25 +1447,27 @@ PlutoUI = "~0.7.52"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.10.0-rc1"
+julia_version = "1.11.2"
 manifest_format = "2.0"
-project_hash = "d27b4cdcd6419242f418cd812af338a9bc51ccbc"
+project_hash = "b5fd1b2783cabc4d41e53fd4df090b600dcd9ea5"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
-git-tree-sha1 = "91bd53c39b9cbfb5ef4b015e8b582d344532bd0a"
+git-tree-sha1 = "6e1d2a35f2f90a4bc7c2ed98079b2ba09c35b83a"
 uuid = "6e696c72-6542-2067-7265-42206c756150"
-version = "1.2.0"
+version = "1.3.2"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
-version = "1.1.1"
+version = "1.1.2"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
+version = "1.11.0"
 
 [[deps.Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+version = "1.11.0"
 
 [[deps.BenchmarkTools]]
 deps = ["JSON", "Logging", "Printf", "Profile", "Statistics", "UUIDs"]
@@ -1417,18 +1477,19 @@ version = "1.3.2"
 
 [[deps.ColorTypes]]
 deps = ["FixedPointNumbers", "Random"]
-git-tree-sha1 = "eb7f0f8307f71fac7c606984ea5fb2817275d6e4"
+git-tree-sha1 = "b10d0b65641d57b8b4d5e234446582de5047050d"
 uuid = "3da002f7-5984-5a60-b8a6-cbb66c0b333f"
-version = "0.11.4"
+version = "0.11.5"
 
 [[deps.CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
-version = "1.0.5+1"
+version = "1.1.1+0"
 
 [[deps.Dates]]
 deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
+version = "1.11.0"
 
 [[deps.Downloads]]
 deps = ["ArgTools", "FileWatching", "LibCURL", "NetworkOptions"]
@@ -1437,34 +1498,36 @@ version = "1.6.0"
 
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
+version = "1.11.0"
 
 [[deps.FixedPointNumbers]]
 deps = ["Statistics"]
-git-tree-sha1 = "335bfdceacc84c5cdf16aadc768aa5ddfc5383cc"
+git-tree-sha1 = "05882d6995ae5c12bb5f36dd2ed3f61c98cbb172"
 uuid = "53c48c17-4a7d-5ca2-90c5-79b7896eea93"
-version = "0.8.4"
+version = "0.8.5"
 
 [[deps.Hyperscript]]
 deps = ["Test"]
-git-tree-sha1 = "8d511d5b81240fc8e6802386302675bdf47737b9"
+git-tree-sha1 = "179267cfa5e712760cd43dcae385d7ea90cc25a4"
 uuid = "47d2ed2b-36de-50cf-bf87-49c2cf4b8b91"
-version = "0.0.4"
+version = "0.0.5"
 
 [[deps.HypertextLiteral]]
 deps = ["Tricks"]
-git-tree-sha1 = "c47c5fa4c5308f27ccaac35504858d8914e102f9"
+git-tree-sha1 = "7134810b1afce04bbc1045ca1985fbe81ce17653"
 uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
-version = "0.9.4"
+version = "0.9.5"
 
 [[deps.IOCapture]]
 deps = ["Logging", "Random"]
-git-tree-sha1 = "d75853a0bdbfb1ac815478bacd89cd27b550ace6"
+git-tree-sha1 = "b6d6bfdd7ce25b0f9b2f6b3dd56b2673a66c8770"
 uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
-version = "0.2.3"
+version = "0.2.5"
 
 [[deps.InteractiveUtils]]
 deps = ["Markdown"]
 uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+version = "1.11.0"
 
 [[deps.JSON]]
 deps = ["Dates", "Mmap", "Parsers", "Unicode"]
@@ -1480,16 +1543,17 @@ version = "0.6.4"
 [[deps.LibCURL_jll]]
 deps = ["Artifacts", "LibSSH2_jll", "Libdl", "MbedTLS_jll", "Zlib_jll", "nghttp2_jll"]
 uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
-version = "8.4.0+0"
+version = "8.6.0+0"
 
 [[deps.LibGit2]]
 deps = ["Base64", "LibGit2_jll", "NetworkOptions", "Printf", "SHA"]
 uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
+version = "1.11.0"
 
 [[deps.LibGit2_jll]]
 deps = ["Artifacts", "LibSSH2_jll", "Libdl", "MbedTLS_jll"]
 uuid = "e37daf67-58a4-590a-8e99-b0245dd2ffc5"
-version = "1.6.4+0"
+version = "1.7.2+0"
 
 [[deps.LibSSH2_jll]]
 deps = ["Artifacts", "Libdl", "MbedTLS_jll"]
@@ -1498,13 +1562,16 @@ version = "1.11.0+1"
 
 [[deps.Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+version = "1.11.0"
 
 [[deps.LinearAlgebra]]
 deps = ["Libdl", "OpenBLAS_jll", "libblastrampoline_jll"]
 uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+version = "1.11.0"
 
 [[deps.Logging]]
 uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
+version = "1.11.0"
 
 [[deps.MIMEs]]
 git-tree-sha1 = "65f28ad4b594aebe22157d6fac869786a255b7eb"
@@ -1514,18 +1581,20 @@ version = "0.1.4"
 [[deps.Markdown]]
 deps = ["Base64"]
 uuid = "d6f4376e-aef5-505a-96c1-9c027394607a"
+version = "1.11.0"
 
 [[deps.MbedTLS_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
-version = "2.28.2+1"
+version = "2.28.6+0"
 
 [[deps.Mmap]]
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
+version = "1.11.0"
 
 [[deps.MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
-version = "2023.1.10"
+version = "2023.12.12"
 
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
@@ -1534,52 +1603,56 @@ version = "1.2.0"
 [[deps.OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
 uuid = "4536629a-c528-5b80-bd46-f80d51c5b363"
-version = "0.3.23+2"
+version = "0.3.27+1"
 
 [[deps.Parsers]]
 deps = ["Dates", "PrecompileTools", "UUIDs"]
-git-tree-sha1 = "716e24b21538abc91f6205fd1d8363f39b442851"
+git-tree-sha1 = "8489905bcdbcfac64d1daa51ca07c0d8f0283821"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
-version = "2.7.2"
+version = "2.8.1"
 
 [[deps.Pkg]]
-deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
+deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "Random", "SHA", "TOML", "Tar", "UUIDs", "p7zip_jll"]
 uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-version = "1.10.0"
+version = "1.11.0"
+
+    [deps.Pkg.extensions]
+    REPLExt = "REPL"
+
+    [deps.Pkg.weakdeps]
+    REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 
 [[deps.PlutoUI]]
 deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "FixedPointNumbers", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "MIMEs", "Markdown", "Random", "Reexport", "URIs", "UUIDs"]
-git-tree-sha1 = "e47cd150dbe0443c3a3651bc5b9cbd5576ab75b7"
+git-tree-sha1 = "eba4810d5e6a01f612b948c9fa94f905b49087b0"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-version = "0.7.52"
+version = "0.7.60"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
-git-tree-sha1 = "03b4c25b43cb84cee5c90aa9b5ea0a78fd848d2f"
+git-tree-sha1 = "5aa36f7049a63a1528fe8f7c3f2113413ffd4e1f"
 uuid = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
-version = "1.2.0"
+version = "1.2.1"
 
 [[deps.Preferences]]
 deps = ["TOML"]
-git-tree-sha1 = "00805cd429dcb4870060ff49ef443486c262e38e"
+git-tree-sha1 = "9306f6085165d270f7e3db02af26a400d580f5c6"
 uuid = "21216c6a-2e73-6563-6e65-726566657250"
-version = "1.4.1"
+version = "1.4.3"
 
 [[deps.Printf]]
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+version = "1.11.0"
 
 [[deps.Profile]]
-deps = ["Printf"]
 uuid = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
-
-[[deps.REPL]]
-deps = ["InteractiveUtils", "Markdown", "Sockets", "Unicode"]
-uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
+version = "1.11.0"
 
 [[deps.Random]]
 deps = ["SHA"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+version = "1.11.0"
 
 [[deps.Reexport]]
 git-tree-sha1 = "45e428421666073eab6f2da5c9d310d99bb12f9b"
@@ -1592,24 +1665,19 @@ version = "0.7.0"
 
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
-
-[[deps.Sockets]]
-uuid = "6462fe0b-24de-5631-8697-dd941f90decc"
-
-[[deps.SparseArrays]]
-deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]
-uuid = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
-version = "1.10.0"
+version = "1.11.0"
 
 [[deps.Statistics]]
-deps = ["LinearAlgebra", "SparseArrays"]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "ae3bb1eb3bba077cd276bc5cfc337cc65c3075c0"
 uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
-version = "1.10.0"
+version = "1.11.1"
 
-[[deps.SuiteSparse_jll]]
-deps = ["Artifacts", "Libdl", "Pkg", "libblastrampoline_jll"]
-uuid = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
-version = "7.2.1+1"
+    [deps.Statistics.extensions]
+    SparseArraysExt = ["SparseArrays"]
+
+    [deps.Statistics.weakdeps]
+    SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [[deps.TOML]]
 deps = ["Dates"]
@@ -1624,23 +1692,26 @@ version = "1.10.0"
 [[deps.Test]]
 deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+version = "1.11.0"
 
 [[deps.Tricks]]
-git-tree-sha1 = "aadb748be58b492045b4f56166b5188aa63ce549"
+git-tree-sha1 = "6cae795a5a9313bbb4f60683f7263318fc7d1505"
 uuid = "410a4b4d-49e4-4fbc-ab6d-cb71b17b3775"
-version = "0.1.7"
+version = "0.1.10"
 
 [[deps.URIs]]
-git-tree-sha1 = "b7a5e99f24892b6824a954199a45e9ffcc1c70f0"
+git-tree-sha1 = "67db6cc7b3821e19ebe75791a9dd19c9b1188f2b"
 uuid = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
-version = "1.5.0"
+version = "1.5.1"
 
 [[deps.UUIDs]]
 deps = ["Random", "SHA"]
 uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+version = "1.11.0"
 
 [[deps.Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
+version = "1.11.0"
 
 [[deps.Zlib_jll]]
 deps = ["Libdl"]
@@ -1650,12 +1721,12 @@ version = "1.2.13+1"
 [[deps.libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
-version = "5.8.0+1"
+version = "5.11.0+0"
 
 [[deps.nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
-version = "1.52.0+1"
+version = "1.59.0+0"
 
 [[deps.p7zip_jll]]
 deps = ["Artifacts", "Libdl"]
@@ -1738,11 +1809,7 @@ version = "17.4.0+2"
 # ╟─0dfc5054-8af2-11eb-098d-35f4e69ae544
 # ╠═126300a2-8af2-11eb-00ea-e76a979aef45
 # ╠═14e46866-8af2-11eb-0894-bba824f266f0
-# ╟─1e7edfdc-8af2-11eb-1429-4d4220bad0f0
-# ╠═25a47c54-8af2-11eb-270a-5b58c3aafe6e
-# ╟─2dc4f936-8af2-11eb-1117-9bc10e619ec6
-# ╠═76a4e83c-8af2-11eb-16d7-75eaabcb21b6
-# ╟─797264de-8af2-11eb-0cb0-adf3fbc95c90
+# ╠═1e7edfdc-8af2-11eb-1429-4d4220bad0f0
 # ╟─80179748-8af2-11eb-0910-2b825104159d
 # ╠═36b723fc-8ee9-11eb-1b92-451b992acc0c
 # ╠═37cd1f1c-8ee9-11eb-015c-ade9efc27708
@@ -1752,6 +1819,15 @@ version = "17.4.0+2"
 # ╟─a105bd68-8af2-11eb-31f6-3335b4fb0f08
 # ╠═a843a0c2-8af2-11eb-2435-17e2c36ec253
 # ╠═b4d9cbb8-8af2-11eb-247c-d5b16e0de13f
+# ╟─29c4f302-1968-43e0-a9bd-fe4c2e5a8970
+# ╠═212d20fa-ab72-4aab-879e-4be8af76ffa3
+# ╠═e72e6430-54d9-4525-a2b1-7905ee520bb4
+# ╠═85e3dda2-e32c-4302-9c80-5e9703d180a6
+# ╟─bc7b3670-7681-4772-9013-4234be701799
+# ╠═108e7813-e222-4363-9e84-182daa67cc63
+# ╠═12ed49db-325a-49d8-bd29-8436bab81749
+# ╟─dfb3e12b-e0db-45cf-88bf-5b8967c9c14d
+# ╠═50e5443c-8aff-4869-8db9-1de7f5ac8161
 # ╟─bc0a2f22-8af2-11eb-3803-f54f84ddfc46
 # ╠═f0bc1fdc-8ee9-11eb-2916-d71e1cf36375
 # ╟─36a2872e-8eeb-11eb-0999-4153ced71678
