@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.20.3
+# v0.20.4
 
 using Markdown
 using InteractiveUtils
@@ -90,7 +90,7 @@ Benchmarking this is a little tricky, because the *first* invocation will includ
 
 $$[CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
-On my computer, finding a single byte in a file (including opening and closing the file) takes about 8 ms, and accessing 1,000,000 integers from memory takes 300 milliseconds. So RAM latency is thousands of times lower than the disk's. Therefore, repeated access to files *must* be avoided in high performance computing.
+On my computer, finding a single byte in a file (including opening and closing the file) takes about 8 ms, and accessing 1,000,000 integers from memory takes 150 milliseconds. So RAM latency is thousands of times lower than the disk's. Therefore, repeated access to files *must* be avoided in high performance computing.
 
 Only a few years back, SSDs were uncommon and HDD throughput was lower than today. Therefore, old texts will often warn people not to have your program depend on the disk at all for high throughput. That advice is mostly outdated today, as most programs are incapable of bottlenecking at the throughput of even cheap, modern SSDs of 1 GB/s. The advice today still stands only for programs that need *frequent* individual reads/writes to disk, where the high *latency* accumulates. In these situations, you should indeed keep your data in RAM.
 
@@ -110,13 +110,13 @@ When the CPU requests a piece of data from the RAM, say a single byte, it will f
 
 It is not possible, except in very low-level languages, to manually manage the CPU cache. Instead, you must make sure to use your cache effectively.
 
-First, you strive to use as little memory as possible. With less memory, it is more likely that your data will be in cache when the CPU needs it. Remember, a CPU can do approximately 500 small operations in the time wasted by a single cache miss.
+First, strive to use as little memory as possible. Since the cache has limited space, data which is not recently used by the CPU must be removed (or _evicted_) to make room for any new data. When you use less memory, a larger fraction of the your data can reside in the cache at one time, reducing the cache misses.
 
-Effective use of the cache comes down to *locality*, temporal and spacial locality:
-* By *temporal locality*, I mean that data you recently accessed likely resides in cache already. Therefore, if you must access a piece of memory multiple times, make sure you do it close together in time.
+Other than reducing the size of your data, effective use of the cache comes down to *locality*, temporal and spacial locality:
+* By *temporal locality*, I mean that data you recently accessed likely resides in cache already (since the _least_ recently used data was probably evicted). Therefore, if you must access a piece of memory multiple times, make sure you do it close together in time.
 * By *spacial locality*, I mean that you should access data from memory addresses close to each other. Your CPU does not copy *just* the requested bytes to cache. Instead, your CPU will always copy data in larger chunks called *cache lines* (usually 512 consecutive bits, depending on the CPU model).
 
-To illustrate this, let's compare the performance of the `random_access` function above when it's run on a short (8 KiB) vector, compared to a long (16 MiB) one. The first one is small enough that after just a few accesses, all the data has been copied to cache. The second is so large that new indexing causes cache misses most of the time.
+To illustrate this, let's compare the performance of the `random_access` function above when it's run on a short (8 KiB) vector, compared to a long (16 MiB) one. The first one is small enough that after just a few accesses, all the data has been copied to cache. The second is too large to fit in the cache, so any random element of the vector is likely to have been previously evicted from the cache, causing a cache miss when it is loaded again.
 
 Notice the large discrepancy in time spent.
 """
@@ -167,10 +167,12 @@ The time wasted can be significant. In a situation where in-cache memory access 
 # ╔═╡ 3a1efd5a-8af0-11eb-21a2-d1011f16555c
 md"The consequences of unaligned memory access are very CPU-dependent. On my current CPU, I see a ~15% performance decrease. On my old computer where I originally wrote this notebook, the penalty was around 100%. Old processors can do [even worse things](https://www.kernel.org/doc/Documentation/unaligned-memory-access.txt) - incredibly, the CPU inside the Game Boy Advance from 2001 would _silently perform a different read!_ 😱
 
-Fortunately, the compiler does a few tricks to make it less likely that you will access misaligned data. First, Julia (and other compiled languages) always places new objects in memory at the boundaries of cache lines. When an object is placed right at the boundary, we say that it is *aligned*. Julia also aligns the beginning of larger arrays:"
+Fortunately, the compiler does a few tricks to make it less likely that you will access misaligned data. First, Julia (and other compiled languages) always places new objects at memory addresses evenly divisible by 16, 32 or 64, making new objects unlikely to cross a cache line.
+When an object is placed at a memory location divisible by 64, we say that it is _64-byte aligned_. 
+Julia also aligns the beginning of larger arrays:"
 
 # ╔═╡ 5b10a2b6-8af0-11eb-3fe7-4b78b4c22550
-md"Note that if the beginning of an array is aligned, then it's not possible for 1-, 2-, 4-, or 8-byte objects to straddle cache line boundaries, and everything will be aligned.
+md"Note that if the beginning of an array is aligned, then it's not possible for 1-, 2-, 4-, or 8-byte objects to straddle cache line boundaries.
 
 It would still be possible for an e.g. 7-byte object to be misaligned in an array. In an array of 7-byte objects, the 10th object would be placed at byte offset $7 \times (10-1) = 63$, and the object would straddle the cache line. However, the compiler usually does not allow struct with a nonstandard size for this reason. If we define a 7-byte struct:"
 
@@ -198,12 +200,58 @@ end
 # ╔═╡ 7b979410-8af0-11eb-299c-af0a5d740c24
 md"""
 We can see that, despite an `AlignmentTest` only having 4 + 2 + 1 = 7 bytes of actual data, it takes up 8 bytes of memory, and accessing an `AlignmentTest` object from an array will always be aligned.
+In this case, we say that the struct contains one byte of _padding_.
 
-As a coder, there are only a few situations where you can face alignment issues. I can come up with two:
+#### Reduce padding in structs by rearranging fields
+For structs, each individual field of the struct also needs to be aligned, such that loading that field does not require loading two cache lines.
 
-1. If you manually create an object with a strange size, e.g. by accessing a dense integer array with pointers. This can save memory, but will waste time. [My implementation of a Cuckoo filter](https://github.com/jakobnissen/Probably.jl) does this to save space.
-2. During matrix operations. If you have a matrix the columns are sometimes unaligned because it is stored densely in memory. E.g. in a 15x15 matrix of `Float32`s, only the first column is aligned, all the others are not. This can have serious effects when doing matrix operations: [I've seen benchmarks](https://juliasimd.github.io/LoopVectorization.jl/latest/examples/matrix_vector_ops/) where an 80x80 matrix/vector multiplication is 2x faster than a 79x79 one due to alignment issues.
+Consider the following struct:
 """
+
+# ╔═╡ 0e79117e-60d5-4048-bc4c-a01c958931a4
+struct BadAlignment
+	a::Int32
+	b::Int64
+	c::Int32
+end
+
+# ╔═╡ afad7413-1130-47df-8a5d-31a82e3069f2
+md"Here, the `b` field needs to be 8-byte aligned, lest the field straddles a cache line. However, the entire struct also needs to be 8-byte aligned for the same reason. Therefore, there needs to be four bytes of padding between the `a` and `b` field (to align the `b` field), as well as four bytes of padding after the `c` field (to align the struct as a whole).
+
+As a consequence, this struct, which only contains 16 bytes of usable data, is 24 bytes in size:"
+
+# ╔═╡ 4ccffc2f-47bd-4b4a-921a-9b116be9dd79
+sizeof(BadAlignment)
+
+# ╔═╡ 9d122371-5ab7-46fb-9180-001a2f44efc7
+md"""
+By simply rearranging the order of the fields from largest to smallest, we can minimize the padding, and in this case, eliminate the padding altogether:
+"""
+
+# ╔═╡ da05965d-1c31-4301-8b08-8cadfc718695
+struct GoodAlignment
+	b::Int64
+	a::Int32
+	c::Int32
+end
+
+# ╔═╡ e4f6e9bc-662a-4dce-b6e9-f8171cc70b8e
+sizeof(GoodAlignment)
+
+# ╔═╡ 8d10a014-796b-42bd-9377-1c51e28d9ce9
+md"This way, we can reduce memory consumption - which, as we've learned in the previous section, translates to better CPU cache usage and hence faster code.
+
+Most modern high-performance programming languages will automatically re-order the fields of structs to minimize padding.
+So if you're a user of, say, Rust, you don't need to worry about this.
+
+Unfortunately, Julia chose to copy the C language, which also doesn't reorder fields, in order to improve Julia-C interoperability, but at the cost of allowing such memory layout optimizations.
+
+There are a few other situations where you, as a programmer, do need to remember that un-aligned loads can cause performance degradation:
+
+1. If you manually accessing data using pointers, you need to consider if the data you access straddles a cache line. Furthermore, CPUs use separate operations for loading aligned and unaligned data. The former operations are faster, but will crash the program if used to load from an unaligned memory address. Therefore, when loading data from a pointer, compilers will typically defensively use the unaligned loading operation, causing the load to be slower than loading a normal struct field, which the compiler, thanks to padding, can guarantee is always aligned.
+
+2. When operating on a dense matrix, where columns are stored contiguous in memory, the columns may be unaligned E.g. in a 15x15 matrix of `Float32`s, only the first column is aligned, all the others are not. This can have serious effects when doing matrix operations: [I've seen benchmarks](https://juliasimd.github.io/LoopVectorization.jl/latest/examples/matrix_vector_ops/) where an 80x80 matrix/vector multiplication is 2x faster than a 79x79 one due to alignment issues.
+"
 
 # ╔═╡ 8802ff60-8af0-11eb-21ac-b9fdbeac7c24
 md"""
@@ -317,7 +365,7 @@ md"However, modern compilers are pretty clever, and will often figure out the op
 md"## Allocations and immutability
 As already mentioned, main RAM is much slower than the CPU cache. However, working in main RAM comes with an additional disadvantage: Programs are handed a bunch of RAM by the operating system (OS) to work with. Within that chunk of memory, the program itself needs to keep track of what RAM is in use by which objects. If the program didn't keep track, the creation of one object in memory could overwrite another object, causing data loss. Therefore, every creation and destruction of data in RAM requires book-keeping, that takes time.
 
-The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Memory that is not kept track of will eventually be overwritten by other data. Allocation and deallocation take a significant amount of time depending on the size of objects, from a few tens of nanoseconds to a few microseconds per allocation.
+The creation of new objects in RAM is termed *allocation*, and the destruction is called *deallocation*. Really, the (de)allocation is not really *creation* or *destruction* per se, but rather the act of starting and stopping keeping track of the memory. Memory that is not kept track of will eventually be overwritten by other data. Allocation and deallocation take a significant amount of time depending on the size of objects, from a few nanoseconds to a few microseconds per allocation.
 
 In programming languages such as Julia, Python, R and Java, deallocation is automatically done using a program called the *garbage collector* (GC). This program keeps track of which objects are rendered unreachable by the programmer, and deallocates them. For example, if you do:"
 
@@ -362,7 +410,7 @@ On my computer, the allocating function is more than 15x slower on average. Also
 * Third, repeated allocations trigger the GC to run, causing overhead
 * Fourth, more allocations sometimes means less efficient cache use because you are using more memory
 
-Note that I used the mean time instead of the median, since for this function the GC only triggers approximately every 30'th call, but it consumes 30-40 µs when it does. All this means performant code should keep allocations to a minimum.
+Note that I used the mean time instead of the median, since for this function the GC only triggers approximately every 8th call, but it consumes 1-15 µs when it does. All this means performant code should keep allocations to a minimum.
 
 The `@btime` macro, and other benchmarking tools, tell you the number of allocations. This information is given because it is assumed that any programmer who cares to benchmark their code will be interested in reducing allocations.
 
@@ -433,7 +481,7 @@ To operate on data structures larger than one register, the data must be broken 
 @code_native debuginfo=:none dump_module=false UInt128(5) + UInt128(11)
 
 # ╔═╡ 7d3fcbd6-8af1-11eb-0441-2f88a9d59966
-md"""There is no register that can store 128-bit integers and add them together. So first, the lower 64 bits must be added using a `add` instruction, fitting in a register. Then the upper bits are added with a `adc` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
+md"""There is no register that can store 128-bit integers and add them together. So first, the lower 64 bits must be added using an `add` instruction, fitting in a register. Then the upper bits are added with an `adc` instruction, which adds the digits, but also uses the carry bit from the previous instruction. Finally, the results are moved 64 bits at a time using `movq` instructions.
 
 This example illustrates what was traditionally a bottleneck for CPU throughput: Each CPU instruction must operate on one or more registers, and each register only contains one integer/float at a time.
 
@@ -605,7 +653,7 @@ end;
 # ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
 let
     data = rand(UInt, 2^24)
-    @time test_file("../smafa/Cargo.lock")
+    @time test_file("../reed/Cargo.lock")
     @time random_access(data, 1000000)
     nothing
 end
@@ -804,6 +852,39 @@ md"""
 The timings you observe here will depend on whether your compiler is clever enough to realize that the computation in the first function can be expressed as a `popcnt` instruction, and thus will be compiled to that. On my computer, the compiler is not able to make that inference, and the second function achieves the same result more than 100x faster.
 """
 
+# ╔═╡ b12a053b-b598-4f09-ab5a-44c13e87b7ba
+md"""
+#### Calling specific CPU instructions
+Julia, like most other high-performance programming languages, allows you to call individual CPU instructions direcly.
+This is not generally advised, since not all your users will have access to the same CPU with the same instructions, and so your code will crash on users working on computers of different brands.
+
+The latest CPUs contain specialized instructions for AES encryption and SHA256 hashing. If you wish to call these instructions, you can call Julia's backend compiler, LLVM, directly. In the example below, I create a function which calls the `vaesenc` (one round of AES encryption) instruction directly:
+"""
+
+# ╔═╡ 46178a2e-67ff-4fcd-afca-4f7116e4f97b
+begin
+    # This is a 128 (2x64) bit "vector" in Julia
+    const __m128i = NTuple{2, VecElement{Int64}}
+
+    # Define the function in terms of LLVM instructions
+    aesenc(a, roundkey) = ccall(
+        "llvm.x86.aesni.aesenc", llvmcall, __m128i,
+        (__m128i, __m128i), a, roundkey
+    )
+end;
+
+# ╔═╡ d19a34ab-297e-4b84-b112-3132940559c1
+md"(Thanks to Kristoffer Carlsson for [the example](http://kristofferc.github.io/post/intrinsics/)). We can verify it works by checking the assembly of the function.
+This only contains a single `vaesenc` instruction, besides the several instructions related to ther overhead of the function call itself (`push`, `pop`, `mov`, `ret` and `nop`):"
+
+# ╔═╡ f560337d-f6f7-47f4-b482-6e4c8fd6dc9f
+@code_native debuginfo=:none dump_module=false aesenc(
+        __m128i((1, 1)), __m128i((1, 1))
+)
+
+# ╔═╡ 3238bc24-4274-49b3-a1c8-142ad9e3b675
+md"""Algorithms which makes use of specialized instructions can be extremely fast. [In a blog post](https://mollyrocket.com/meowhash), the video game company Molly Rocket unveiled a new non-cryptographic hash function using AES instructions which reached unprecedented speeds."""
+
 # ╔═╡ 80179748-8af2-11eb-0910-2b825104159d
 md"## Inlining
 Consider the assembly of this function:"
@@ -872,7 +953,7 @@ To summarize the above section on inlining:
 * This saves the small overhead imposed by the function call, and allows the caller and callee to be optimised together, enabling more optimisation
 * Only small functions are automatically inlined by the compiler
 
-Sometimes, you have a funciton with the following structure:
+Sometimes, you have a function with the following structure:
 
 ```julia
 function my_computation(args...)
@@ -888,7 +969,8 @@ This could, for instance be a function that caches its result, and usually can s
 
 We can illustrate this with the function `trig_default` below.
 When given a random integer, the first branch is taken about 99.2% of the time and is quite fast.
-When the branch is _not_ taken, a bunch of trigonomic functions are executed, which is complex and gets compiled to so much machine code that Julia's compiler will not automatically inline `trig_default`.
+When the branch is _not_ taken, a bunch of trigonomic functions are executed.
+These functions are complicated and get compiled to so much machine code that Julia's compiler will not automatically inline `trig_default`.
 """
 
 # ╔═╡ 212d20fa-ab72-4aab-879e-4be8af76ffa3
@@ -901,16 +983,19 @@ function trig_default(x::Int)
 		# complex, so this results in quite a bit of machine code
 		trunc(Int, sin(x) + atan(x) + cos(1 - x) + sqrt(1/x))
 	end
-end
+end;
+
+# ╔═╡ 640a720f-800d-478a-8a55-9624977b38e7
+md"We can time `trig_default` by applying it to each element of an array of integers, and summing the result:"
 
 # ╔═╡ e72e6430-54d9-4525-a2b1-7905ee520bb4
 numbers = rand(1:typemax(Int), 1_000_000);
 
 # ╔═╡ 85e3dda2-e32c-4302-9c80-5e9703d180a6
-@btime sum(trig_default, numbers; init=0) seconds=1
+@btime sum(trig_default, numbers; init=0) seconds=1;
 
 # ╔═╡ bc7b3670-7681-4772-9013-4234be701799
-md"""As a result, in the call to `sum` above, the many function calls to `trig_default` takes up a large fraction of the total time spent.
+md"""In the `sum` call above, every time `trig_default` is called, the penalty of a function call is paid.
 
 This is clearly suboptimal: The trigonomic code is executed less than 1% of the time `trig_default` is called, but its mere presence prevents the function from being inlined, which causes _every_ call to it to be slower.
 We could of course directly command the compiler to inline `trig_default` using the `@inline` macro - but remember that inlining comes with drawbacks: There is a reason not all function calls are always inlined.
@@ -945,12 +1030,12 @@ As a result, the equivalent call to `sum` is more than twice as fast:
 """
 
 # ╔═╡ 50e5443c-8aff-4869-8db9-1de7f5ac8161
-@btime sum(trig_with_outline, numbers; init=0) seconds=1
+@btime sum(trig_with_outline, numbers; init=0) seconds=1;
 
 # ╔═╡ bc0a2f22-8af2-11eb-3803-f54f84ddfc46
 md"""
 ## Unrolling
-Consider a function that sums a vector of 64-bit integers. If the vector's data's memory offset is stored in register `%r9`, the length of the vector is stored in register `%r8`, the current index of the vector in `%rcx` and the running total in `%rax`, the assembly of the inner loop could look like this:
+Consider a function that sums a vector of 64-bit integers. If the vector's data's memory offset is stored in register `rdx`, the length of the vector is stored in register `r8`, the current index of the vector in `rdi` and the running total in `rax`, the assembly of the inner loop could look like this:
 
 ```
 L1:
@@ -964,7 +1049,7 @@ L1:
     cmp   r8, rdi
 
     ; repeat loop if index is smaller
-    jne   L1
+    jb   L1
 ```
 
 For a total of 4 instructions per element of the vector. The actual code generated by Julia will be similar to this, but also incluce extra instructions related to bounds checking that are not relevant here (and of course will include different comments).
@@ -996,7 +1081,7 @@ L1:
     add   rax, qword ptr [rdx + 8*rdi + 24]
     add   rdx, 4
     cmp   r8, rdx
-    jne   L1
+    jb   L1
 ```
 
 For a total of 7 instructions per 4 additions, or 1.75 instructions per addition. This is less than half the number of instructions per integer! The speed gain comes from simply checking less often when we're at the end of the loop. We call this process *unrolling* the loop, here by a factor of four. Naturally, unrolling can only be done if we know the number of iterations beforehand, so we don't "overshoot" the number of iterations. Often, the compiler will unroll loops automatically for extra performance, but it can be worth looking at the assembly. For example, this is the assembly for the innermost loop generated on my computer for `sum([1])`:
@@ -1008,7 +1093,7 @@ For a total of 7 instructions per 4 additions, or 1.75 instructions per addition
         vpaddq  zmm3, zmm3, zmmword ptr [rdx + 8*rax + 200]
         add     rax, 32
         cmp     r9, rax
-        jne     .LBB0_6
+        jb     .LBB0_6
 
 Where you can see it is both unrolled by a factor of four, and uses 512-bit SIMD instructions, for a total of 256 bytes or 32 integers added per iteration, or 0.22 instructions per integer.
 
@@ -1180,33 +1265,33 @@ Thinking about it more deeply, why *is* the perfectly predicted example above fa
 Let's look at the assembly code. Here, I've just cut out the assembly for the loop (since almost all time is spent there)
 
 For the branch-ful version, we have:
-```julia
-1 L48:
-2     incq	%rsi
-3     cmpq	%rsi, %r9
-4     je	L75
-5 L56:
-6     movq	(%rdx,%rsi,8), %rcx
-7     testb	$1, %cl
-8     je	L48
-9     movq	%rcx, -8(%r8,%rdi,8)
-10	incq	%rdi
-11	jmp	L48
+```
+L48:
+        inc     rdi
+        cmp     rcx, rdi
+        je      L75
+L56:
+        mov     r8d, dword ptr [rdx + 4*rdi]
+        test    r8b, 1
+        je      L48
+        mov     dword ptr [rsi + 4*rax], r8d
+        inc     rax
+        jmp     L48
 ```
 
 And for the branch-less, we have:
-```julia
-1 L48:
-2	movq	(%r9,%rcx,8), %rdx
-3	incq	%rcx
-4	movq	%rdx, -8(%rsi,%rdi,8)
-5	andl	$1, %edx
-6	addq	%rdx, %rdi
-7	cmpq	%rcx, %r8
-8	jne	L48
+```
+L48:
+        mov     r9d, dword ptr [rdx + 4*r8]
+        inc     r8
+        mov     dword ptr [rsi + 4*rdi - 4], r9d
+        and     r9d, 1
+        add     rdi, r9
+        cmp     rcx, r8
+        jne     L48
 ```
 
-The branch-ful executes 9 instructions per iteration (remember, all iterations had uneven numbers), whereas the branch-less executes only 7. Looking at the table for how long instructions take, you will find all these instructions are fast. So what gives?
+The branch-ful executes 9 instructions per iteration, (remember, all iterations had uneven numbers), whereas the branch-less executes only 7. Looking at the table for how long instructions take, you will find all these instructions are fast. So what gives?
 
 To understand what is happening, we need to go a little deeper into the CPU. In fact, the CPU does not execute CPU instructions in a linear fashion as the assembly code would have you believe. Instead, a more accurate (but still simplified) picture is the following:
 
@@ -1224,7 +1309,7 @@ Second, branch prediction (as discussed in the previous section) does not happen
 
 When visualizing how the code of the small `copy_odds_branches!` loop above is executed, you may imagine that the branch predictor predicts all branches, say, 6 iterations of the loop into the future, loads the microcode of all 6 future iterations into the reorder buffer, executes them all in parallel, and _then_ verifies - still in parallel - that its branches were guessed correctly.
 
- Indicentally, this bulk processing is why a branch mispredict is so bad for performance - if a branch turns out to be mispredicted, all the work in the reorder buffer must be scrapped, and the CPU must start over with fetching new instructions, compile them to microcode, fill the buffer et cetera.
+Indicentally, this bulk processing is why a branch mispredict is so bad for performance - if a branch turns out to be mispredicted, all the work in the reorder buffer must be scrapped, and the CPU must start over with fetching new instructions, compile them to microcode, fill the buffer et cetera.
 
 Let's think about the implications of the re-order buffer for a moment. Other than creating hard-to-predict branches, what kind of code can we write that messes up that workflow for the CPU?
 
@@ -1290,11 +1375,12 @@ Threads.nthreads()
 
 # ╔═╡ 8e59bef3-90fe-4680-802a-9350dfe5fe73
 function frequent_cache_misses()
-    src = rand(UInt8, 10_000_000)
+    src = rand(UInt8, 2_000_000)
 	dst = similar(src)
 	x = 0
-	for i in 1:20
+	for i in 1:100
 		x += copy_odds_branches!(dst, src)
+		yield()
 	end
 	x
 end		
@@ -1305,20 +1391,20 @@ function parallel_run(n_jobs)
     for job in 1:n_jobs
         push!(jobs, Threads.@spawn frequent_cache_misses())
     end
-    return sum(fetch, jobs)
+    return sum(i -> fetch(i)::Int, jobs)
 end;
 
 # ╔═╡ 2192c228-8af3-11eb-19d8-81db4f3c0d81
 let
     parallel_run(1); # run once to compile it
-    for njobs in (1, 8, 16)
+    for njobs in (1, 4, 8, 16)
         @time parallel_run(njobs);
     end
 end
 
 # ╔═╡ 2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
 md"""
-You can see that with this task, my computer can run 4 jobs in parallel almost as fast as it can run 1. But 8 jobs takes twice as long as 4. This is because 4 can run simultaneously, one on each thread.
+You can see that with this task, my computer can run 8 jobs in parallel almost as fast as it can run 1. But 16 jobs takes twice as long as 8. This is because 8 can run simultaneously, one on each thread.
 
 #### Hyperthreading
 Besides each CPU having multiple cores, some CPUs have a feature called *hyper-threading*, where two *threads* (i.e. streams of instructions) are able to run on each core. The idea is that whenever one process is stalled (e.g. because it experiences a cache miss or a branch misprediction), the other process can continue on the same core. The CPU "pretends" to have twice the amount of processors.
@@ -1378,16 +1464,18 @@ end;
 @time julia_single_threaded();
 
 # ╔═╡ 3e83981a-8af3-11eb-3c87-77797adb7e1f
-md"That took around 2 seconds on my computer. Now for a parallel one:"
+md"Now for a parallel one:"
 
 # ╔═╡ 3e1c4090-8af3-11eb-33d0-b9c299fef20d
 begin
     function recursive_fill_columns!(M::Matrix, cols::UnitRange)
         F, L = first(cols), last(cols)
-        # If only one column, fill it using fill_column!
-        if F == L
-            r = range(-1.0f0, 1.0f0, length=size(M, 2))[F]
-            fill_column!(M, F, r)
+        # For a small number of columns, fill them directly
+		if L - F < 16
+			for i in F:L
+            	r = range(-1.0f0, 1.0f0, length=size(M, 2))[i]
+            	fill_column!(M, i, r)
+			end
         # Else divide the range of columns in two, spawning a new task for each half
         else
             mid = div(L+F,2)
@@ -1760,6 +1848,13 @@ version = "17.4.0+2"
 # ╟─624eae74-8af0-11eb-025b-8b68dc55f31e
 # ╠═d4c8c38c-8ee6-11eb-0b49-33fbfbd214f3
 # ╟─7b979410-8af0-11eb-299c-af0a5d740c24
+# ╠═0e79117e-60d5-4048-bc4c-a01c958931a4
+# ╟─afad7413-1130-47df-8a5d-31a82e3069f2
+# ╠═4ccffc2f-47bd-4b4a-921a-9b116be9dd79
+# ╟─9d122371-5ab7-46fb-9180-001a2f44efc7
+# ╠═da05965d-1c31-4301-8b08-8cadfc718695
+# ╠═e4f6e9bc-662a-4dce-b6e9-f8171cc70b8e
+# ╟─8d10a014-796b-42bd-9377-1c51e28d9ce9
 # ╟─8802ff60-8af0-11eb-21ac-b9fdbeac7c24
 # ╠═a36582d4-8af0-11eb-2b5a-e577c5ed07e2
 # ╠═a74a9966-8af0-11eb-350f-6787d2759eba
@@ -1809,7 +1904,12 @@ version = "17.4.0+2"
 # ╟─0dfc5054-8af2-11eb-098d-35f4e69ae544
 # ╠═126300a2-8af2-11eb-00ea-e76a979aef45
 # ╠═14e46866-8af2-11eb-0894-bba824f266f0
-# ╠═1e7edfdc-8af2-11eb-1429-4d4220bad0f0
+# ╟─1e7edfdc-8af2-11eb-1429-4d4220bad0f0
+# ╟─b12a053b-b598-4f09-ab5a-44c13e87b7ba
+# ╠═46178a2e-67ff-4fcd-afca-4f7116e4f97b
+# ╟─d19a34ab-297e-4b84-b112-3132940559c1
+# ╠═f560337d-f6f7-47f4-b482-6e4c8fd6dc9f
+# ╟─3238bc24-4274-49b3-a1c8-142ad9e3b675
 # ╟─80179748-8af2-11eb-0910-2b825104159d
 # ╠═36b723fc-8ee9-11eb-1b92-451b992acc0c
 # ╠═37cd1f1c-8ee9-11eb-015c-ade9efc27708
@@ -1821,6 +1921,7 @@ version = "17.4.0+2"
 # ╠═b4d9cbb8-8af2-11eb-247c-d5b16e0de13f
 # ╟─29c4f302-1968-43e0-a9bd-fe4c2e5a8970
 # ╠═212d20fa-ab72-4aab-879e-4be8af76ffa3
+# ╟─640a720f-800d-478a-8a55-9624977b38e7
 # ╠═e72e6430-54d9-4525-a2b1-7905ee520bb4
 # ╠═85e3dda2-e32c-4302-9c80-5e9703d180a6
 # ╟─bc7b3670-7681-4772-9013-4234be701799
@@ -1855,8 +1956,8 @@ version = "17.4.0+2"
 # ╠═2192c228-8af3-11eb-19d8-81db4f3c0d81
 # ╟─2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
 # ╠═316e5074-8af3-11eb-256b-c5b212f7e0d3
-# ╠═39a85a58-8af3-11eb-1334-6f50ed9acd31
-# ╟─3e83981a-8af3-11eb-3c87-77797adb7e1f
+# ╟─39a85a58-8af3-11eb-1334-6f50ed9acd31
+# ╠═3e83981a-8af3-11eb-3c87-77797adb7e1f
 # ╠═3e1c4090-8af3-11eb-33d0-b9c299fef20d
 # ╠═4be905b4-8af3-11eb-0344-dbdc7e94ddf3
 # ╟─4e8f6cb8-8af3-11eb-1746-9384995d7022
