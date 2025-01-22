@@ -36,12 +36,6 @@ This too, is outside the scope of this tutorial. However, I would say that as a 
 * The basics of how an `Array` is structured, and what the difference between a dense array of e.g. integers and an array of references to objects are
 * The principles behind how a `Dict` (i.e. hash table) and a `Set` works
 
-Furthermore, I would also recommend familiarizing yourself with:
-
-* Heaps
-* Deques
-* Tuples
-
 #### This is not a tutorial on benchmarking your code
 To write fast code *in practice*, it is necessary to profile your code to find bottlenecks where your machine spends the majority of the time. One must benchmark different functions and approaches to find the fastest in practice. Julia (and other languages) have tools for exactly this purpose, but I will not cover them here.
 """
@@ -90,7 +84,7 @@ Benchmarking this is a little tricky, because the *first* invocation will includ
 
 $$[CPU] ↔ [RAM] ↔ [DISK CACHE] ↔ [DISK]$$
 
-On my computer, finding a single byte in a file (including opening and closing the file) takes about 8 ms, and accessing 1,000,000 integers from memory takes 150 milliseconds. So RAM latency is thousands of times lower than the disk's. Therefore, repeated access to files *must* be avoided in high performance computing.
+On my computer, finding a single byte in a file (including opening and closing the file) takes about 800 μs, and accessing 1,000,000 integers from memory takes ~150 milliseconds. So RAM latency is thousands of times lower than the disk's. Therefore, repeated access to files *must* be avoided in high performance computing.
 
 Only a few years back, SSDs were uncommon and HDD throughput was lower than today. Therefore, old texts will often warn people not to have your program depend on the disk at all for high throughput. That advice is mostly outdated today, as most programs are incapable of bottlenecking at the throughput of even cheap, modern SSDs of 1 GB/s. The advice today still stands only for programs that need *frequent* individual reads/writes to disk, where the high *latency* accumulates. In these situations, you should indeed keep your data in RAM.
 
@@ -530,18 +524,16 @@ Fortunately, in the latest versions of Julia, the compiler has been pretty smart
 To demonstrate the significant impact of SIMD, we can use a function that uses an input function to break a loop. We can then compare the speed between: (1) a function that the compiler knows will never break the loop and so can use SIMD, and (2) a function that might break the loop."""
 
 # ╔═╡ 94182f88-8af1-11eb-207a-37083c1ead68
-begin
-	# The loop in the function breaks if pred(x[i])
-	# returns `true`, and therefore cannot be SIMDd
-    function sum_predicate(pred, x::Vector)
-        n = zero(eltype(x))
-        for i in eachindex(x)
-			y = x[i]
-			pred(y) && break
-			n += y
-        end
-        return n
-    end
+# The loop in the function breaks if pred(x[i])
+# returns `true`, and therefore cannot be SIMDd
+function sum_predicate(pred, x::Vector)
+	n = zero(eltype(x))
+	for i in eachindex(x)
+		y = x[i]
+		pred(y) && break
+		n += y
+	end
+	return n
 end;
 
 # ╔═╡ aa3931fc-8af1-11eb-2f42-f582b8e639ad
@@ -563,7 +555,7 @@ Perhaps surprisingly, addition of floating point numbers can give different resu
 """
 
 # ╔═╡ c01bf4b6-8af1-11eb-2f17-bfe0c93d48f9
-begin
+let
     x = eps(1.0) * 0.4
     print(1.0 + (x + x) == (1.0 + x) + x)
 end
@@ -653,7 +645,7 @@ end;
 # ╔═╡ bff99828-8aef-11eb-107b-a5c67101c735
 let
     data = rand(UInt, 2^24)
-    @time test_file("../reed/Cargo.lock")
+    @time test_file("../smafa/Cargo.lock")
     @time random_access(data, 1000000)
     nothing
 end
@@ -1007,7 +999,7 @@ In order to do this, we can refactor `trig_default` like so:
 # ╔═╡ 12ed49db-325a-49d8-bd29-8436bab81749
 function trig_outlined(x::Int)
 	trunc(Int, sin(x) + atan(x) + cos(1 - x) + sqrt(1/x))
-end
+end;
 
 # ╔═╡ 108e7813-e222-4363-9e84-182daa67cc63
 function trig_with_outline(x::Int)
@@ -1016,7 +1008,7 @@ function trig_with_outline(x::Int)
 	else
 		trig_outlined(x)
 	end
-end
+end;
 
 # ╔═╡ dfb3e12b-e0db-45cf-88bf-5b8967c9c14d
 md"""
@@ -1120,7 +1112,8 @@ end
 
 # ╔═╡ 36a2872e-8eeb-11eb-0999-4153ced71678
 md"""
-The _first_ function stops and returns as soon as it finds a `true` value - but this break in the loop disables SIMD and unrolling. The _second_ function continues throughout the entire array, even if the very first value is `true`. While this enables SIMD and unrolling, it's obviously wasteful if it sees a `true` right in the beginning. Hence, the first is better when we expect to see the first `true` before around 1/4th of the way though the array, the latter better otherwise.
+The _first_ function, using `any`, stops and returns as soon as it finds a `true` value - but this break in the loop disables SIMD and unrolling. The _second_ function, using `foldl` continues throughout the entire array, even if the very first value is `true`. While this enables SIMD and unrolling, it's obviously wasteful if it sees a `true` right in the beginning.
+Hence, the first is better when we expect to see the first `true` early in the array, the latter better otherwise.
 
 We can create a compromise by manually unrolling. In the functions below, `check128` checks 128 entries using `inbounds`, without stopping underway to check if it's found a `true`, and is thus unrolled and SIMDd. `unroll_compromise` then uses `check128`, but breaks out of the loop as soon as it finds a `true.`
 """
@@ -1251,7 +1244,7 @@ end
 
 # ╔═╡ f969eed2-8af2-11eb-1e78-5b322a7f4ebd
 md"""
-Which contains no other branches than the one caused by the loop itself (which is easily predictable), and results in speeds slightly worse than the perfectly predicted one, but much better for random data.
+Which contains no other branches than the one caused by the loop itself (which is easily predictable), and results in speeds roughly on the same order as the previous case with perfectly predicted data, even when the data here is random.
 
 The compiler will often remove branches in your code when the same computation can be done using other instructions. When the compiler fails to do so, Julia offers the `ifelse` function, which sometimes can help elide branching.
 """
@@ -1260,7 +1253,7 @@ The compiler will often remove branches in your code when the same computation c
 md"""
 ## Be aware of memory dependencies
 
-Thinking about it more deeply, why *is* the perfectly predicted example above faster than the solution that avoids having that extra branch there at all?
+Thinking about it more deeply, why *is* the perfectly predicted example above about as fast as the solution that avoids having that extra branch at all?
 
 Let's look at the assembly code. Here, I've just cut out the assembly for the loop (since almost all time is spent there)
 
@@ -1291,7 +1284,9 @@ L48:
         jne     L48
 ```
 
-The branch-ful executes 9 instructions per iteration, (remember, all iterations had uneven numbers), whereas the branch-less executes only 7. Looking at the table for how long instructions take, you will find all these instructions are fast. So what gives?
+The branch-ful executes 9 instructions per iteration, (remember, all iterations had uneven numbers), whereas the branch-less executes only 7. Looking at the table for how long instructions take, you will find all these instructions are fast.
+
+So, shouldn't the branchless be significantly faster? Why isn't it?
 
 To understand what is happening, we need to go a little deeper into the CPU. In fact, the CPU does not execute CPU instructions in a linear fashion as the assembly code would have you believe. Instead, a more accurate (but still simplified) picture is the following:
 
@@ -1349,14 +1344,24 @@ Going back to the original example, that is why the perfectly predicted `copy_od
 md"""
 ## Variable clock speed
 
-A modern laptop CPU optimized for low power consumption consumes roughly 25 watts of power on a chip as small as a stamp (and thinner than a human hair). Without proper cooling, this will cause the temperature of the CPU to skyrocket and melting the plastic of the chip, destroying it. Typically, CPUs have a maximal operating temperature of about 100 degrees C. Power consumption, and therefore heat generation, depends among many factors on clock speed: higher clock speeds generate more heat.
+A modern laptop CPU optimized for low power consumption consumes roughly 25 watts of power on a chip as small as a stamp and thinner than a human hair.
+Without proper cooling, this will cause the temperature of the CPU to skyrocket and melting the plastic of the chip, destroying it.
+Typically, CPUs have a maximal operating temperature of about 100 degrees C.
+Power consumption, and therefore heat generation, depends among many factors on clock speed: higher clock speeds generate more heat.
 
-Modern CPUs are able to adjust their clock speeds according to the CPU temperature to prevent the chip from destroying itself. Often, CPU temperature will be the limiting factor in how quick a CPU is able to run. In these situations, better physical cooling for your computer translates directly to a faster CPU. Old computers can often be revitalized simply by removing dust from the interior, and replacing the cooling fans and [CPU thermal paste](https://en.wikipedia.org/wiki/Thermal_grease)!
+Modern CPUs contain thermometers, are will adjust their clock speeds according to their CPU temperature to prevent the chip from destroying itself.
+Often, CPU temperature will be the limiting factor in how quick a CPU is able to run.
+In these situations, better physical cooling for your computer translates directly to a faster CPU.
+Old computers can often be revitalized simply by removing dust from the interior, and replacing the cooling fans and [CPU thermal paste](https://en.wikipedia.org/wiki/Thermal_grease)!
 
 As a programmer, there is not much you can do to take CPU temperature into account, but it is good to know. In particular, variations in CPU temperature often explain observed difference in performance:
 
-* CPUs usually work fastest at the beginning of a workload, and then drop in performance as it reaches maximal temperature
-* SIMD instructions usually require more power than ordinary instructions, generating more heat, and lowering the clock frequency. This can offset some performance gains of SIMD, but SIMD will nearly always be more efficient when applicable. One exception is the relatively recent 512-bit SIMD instructions. In current (2021) CPUs, these instructions draw so much power that the resulting clock frequency lowering actually leads to overall performance decrease for some workloads. This problem will probably be solved in the near future, either by the power draw begin reduced, by consumer chips abandoning 512-bit SIMD, or by compilers refusing to compile to these instructions.
+First, CPUs usually work fastest at the beginning of a workload when the CPU is cool, and then drop in performance as it reaches maximum temperature.
+
+Second, SIMD instructions usually require more power than ordinary instructions, generating more heat, and lowering the clock frequency.
+This can offset some performance gains of SIMD, but SIMD will nearly always be more efficient when applicable.
+
+Third, when a CPU uses multiple threads (see next section), it will draw more power and therefore reach is maximum temperature more quickly. For this reason, when a CPU uses multiple threads, each thread will typically run slower than it would if it was the only thread running on the CPU.
 """
 
 # ╔═╡ 119d269c-8af3-11eb-1fdc-b7ac75b89cf2
@@ -1464,7 +1469,7 @@ end;
 @time julia_single_threaded();
 
 # ╔═╡ 3e83981a-8af3-11eb-3c87-77797adb7e1f
-md"Now for a parallel one:"
+md"And now for a parallel one:"
 
 # ╔═╡ 3e1c4090-8af3-11eb-33d0-b9c299fef20d
 begin
@@ -1497,7 +1502,7 @@ end;
 
 # ╔═╡ 4e8f6cb8-8af3-11eb-1746-9384995d7022
 md"""
-This is much faster! With 8 threads, this is close to the best case scenario, only possible for near-perfect embarrasingly parallel tasks.
+This is much faster! Not exactly 8x faster, since there is some overhead associated with multithreading (and possibly even some CPU throttling caused by high temperature), but a sizable improvement nonetheless.
 
 Despite the potential for great gains, in my opinion, multithreading should be one of the last resorts for performance improvements, for three reasons:
 
@@ -1513,7 +1518,12 @@ So far, we've covered only the most important kind of computing chip, the CPU. B
 
 As shown in the above example with the Julia set, the task of creating computer images is often embarassingly parallel with an extremely high degree of parallelizability. In the limit, the value of each pixel is an independent task. This calls for a chip with a high number of cores to do effectively. Because generating graphics is a fundamental part of what computers do, nearly all commercial computers contain a GPU. Often, it's a smaller chip integrated into the motherboard (*integrated graphics*, popular in small laptops). Other times, it's a large, bulky card.
 
-GPUs have sacrificed many of the bells and whistles of CPUs covered in this document such as specialized instructions, SIMD and branch prediction. They also usually run at lower frequencies than CPUs. This means that their raw compute power is many times slower than a CPU. To make up for this, they have a high number of cores. For example, the high-end gaming GPU NVIDIA RTX 2080Ti has 4,352 cores. Hence, some tasks can experience 10s or even 100s of times speedup using a GPU. Most notably for scientific applications, matrix and vector operations are highly parallelizable.
+GPUs have sacrificed many of the bells and whistles of CPUs covered in this document such as specialized instructions, and branch prediction.
+They also usually run at lower frequencies than CPUs. On top of this, GPUs have much higher memory latencies than CPUs.
+All these limitations mean that, for most tasks, GPUs are slower than CPUs.
+To make up for this, they have a high number of cores.
+For example, the high-end NVIDIA H100 GPU has 16,896 cores - more than a thousand times more than my laptop's CPU.
+Hence, some tasks can experience 10s or even 100s of times speedup using a GPU. Most notably for scientific applications, matrix and vector operations are highly parallelizable.
 
 Unfortunately, the laptop I'm writing this document on has only integrated graphics, and there is not yet a stable way to interface with integrated graphics using Julia, so I cannot show examples.
 
@@ -1535,7 +1545,7 @@ PlutoUI = "~0.7.52"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.11.2"
+julia_version = "1.11.3"
 manifest_format = "2.0"
 project_hash = "b5fd1b2783cabc4d41e53fd4df090b600dcd9ea5"
 
@@ -1957,7 +1967,7 @@ version = "17.4.0+2"
 # ╟─2d0bb0a6-8af3-11eb-384d-29fbb0f66f24
 # ╠═316e5074-8af3-11eb-256b-c5b212f7e0d3
 # ╟─39a85a58-8af3-11eb-1334-6f50ed9acd31
-# ╠═3e83981a-8af3-11eb-3c87-77797adb7e1f
+# ╟─3e83981a-8af3-11eb-3c87-77797adb7e1f
 # ╠═3e1c4090-8af3-11eb-33d0-b9c299fef20d
 # ╠═4be905b4-8af3-11eb-0344-dbdc7e94ddf3
 # ╟─4e8f6cb8-8af3-11eb-1746-9384995d7022
